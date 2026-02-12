@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: watchscraper
+      POSTGRES_PASSWORD: watchscraper
+      POSTGRES_DB: watchscraper
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  # Optional: FlareSolverr for Cloudflare bypass
+  # flaresolverr:
+  #   image: ghcr.io/flaresolverr/flaresolverr:latest
+  #   ports:
+  #     - "8191:8191"
+
+volumes:
+  pgdata:

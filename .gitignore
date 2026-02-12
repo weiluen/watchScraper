@@ -1,12 +1,19 @@
 # Dependencies
 node_modules/
 venv/
+.venv/
 __pycache__/
 *.pyc
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
 
 # Environment
 .env
 .env.local
+.python-version
 
 # OS files
 .DS_Store
@@ -24,3 +31,8 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
