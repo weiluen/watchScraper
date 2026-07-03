@@ -158,7 +158,10 @@ def _holding_dicts() -> list[dict]:
 def api_portfolio():
     snapshot = services.get_market()
     return portfolio_svc.value_holdings(
-        _holding_dicts(), snapshot.dom_weekly, ref_values=snapshot.ref_values
+        _holding_dicts(),
+        snapshot.dom_weekly,
+        ref_values=snapshot.ref_values,
+        valuation=snapshot.valuation,
     )
 
 

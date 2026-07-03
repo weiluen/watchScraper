@@ -32,6 +32,11 @@ from watchscraper.quant import (
     forecast_families,
     forecast_series,
 )
+from watchscraper.valuation import (
+    ValuationModel,
+    build_valuation,
+    market_index_from_trends,
+)
 
 CACHE_TTL_SECONDS = 900
 
@@ -81,6 +86,7 @@ class MarketSnapshot:
     report: dict
     dominant: dict[str, str] = field(default_factory=dict)
     breakdown: pd.DataFrame = field(default_factory=pd.DataFrame)
+    valuation: ValuationModel = field(default_factory=ValuationModel)
     ref_values: pd.DataFrame = field(default_factory=pd.DataFrame)
     nicknames_by_ref: dict[tuple[str, str], list[str]] = field(default_factory=dict)
     computed_at: float = field(default_factory=time.time)
@@ -122,7 +128,12 @@ def get_market(refresh: bool = False) -> MarketSnapshot:
             dominant = dominant_material(df)
             dom_weekly = dominant_weekly(weekly, dominant)
             signals = family_signals(df, dom_weekly, dominant)
-            index = build_market_index(weekly)
+            valuation = build_valuation(
+                df[df["clean"] & (df["price_type"] == "sold")]
+            )
+            index = market_index_from_trends(valuation)
+            if index.empty:
+                index = build_market_index(weekly)
             index_fc = forecast_series(index) if not index.empty else None
             forecasts = forecast_families(dom_weekly)
             nick_rows = pd.read_sql(
@@ -150,6 +161,7 @@ def get_market(refresh: bool = False) -> MarketSnapshot:
                 report=cleaning_report(df),
                 dominant=dominant,
                 breakdown=material_breakdown(df),
+                valuation=valuation,
                 ref_values=reference_values(df),
                 nicknames_by_ref=nicknames_by_ref,
             )
@@ -238,18 +250,29 @@ def family_detail_payload(snapshot: MarketSnapshot, slug: str) -> dict | None:
         return None
     family = row["family"]
 
-    weekly_sold = family_weekly_series(snapshot, family, "sold")
+    # Smooth family value line from the valuation model (standard config,
+    # composition-adjusted) — weekly medians of whoever-sold-that-week are
+    # composition noise and are no longer plotted as a line
+    history = []
+    fam_model = snapshot.valuation.families.get(family)
+    if fam_model is not None:
+        import numpy as _np
+
+        se = _np.sqrt(fam_model.trend_se**2)
+        values = _np.exp(fam_model.base + fam_model.trend)
+        los = _np.exp(fam_model.base + fam_model.trend - 1.96 * se)
+        his = _np.exp(fam_model.base + fam_model.trend + 1.96 * se)
+        history = [
+            {
+                "date": d.strftime("%Y-%m-%d"),
+                "median": _clean_float(v),
+                "p25": _clean_float(lo),
+                "p75": _clean_float(hi),
+            }
+            for d, v, lo, hi in zip(fam_model.grid, values, los, his)
+        ]
+
     weekly_ask = family_weekly_series(snapshot, family, "asking")
-    history = [
-        {
-            "date": r["week"].strftime("%Y-%m-%d"),
-            "median": _clean_float(r["median"]),
-            "p25": _clean_float(r["p25"]),
-            "p75": _clean_float(r["p75"]),
-            "n": int(r["n"]),
-        }
-        for _, r in weekly_sold.iterrows()
-    ]
     asking_history = [
         {
             "date": r["week"].strftime("%Y-%m-%d"),
@@ -316,6 +339,32 @@ def family_detail_payload(snapshot: MarketSnapshot, slug: str) -> dict | None:
             for _, r in fam_break.iterrows()
         ]
 
+    # Forecast from the smoothed trend, damped
+    forecast_points = []
+    fc = snapshot.valuation.forecast_trend(family)
+    if fc is not None and fam_model is not None:
+        import numpy as _np
+
+        for _, r in fc.iterrows():
+            forecast_points.append(
+                {
+                    "date": r["week"].strftime("%Y-%m-%d"),
+                    "forecast": _clean_float(float(_np.exp(fam_model.base + r["trend"]))),
+                    "p05": _clean_float(float(_np.exp(fam_model.base + r["p05"]))),
+                    "p95": _clean_float(float(_np.exp(fam_model.base + r["p95"]))),
+                }
+            )
+
+    chg_1m = chg_3m = None
+    if fam_model is not None and len(fam_model.trend) > 4:
+        chg_1m = _clean_float(
+            float((np.exp(fam_model.trend[-1] - fam_model.trend[-5]) - 1) * 100)
+        )
+        if len(fam_model.trend) > 12:
+            chg_3m = _clean_float(
+                float((np.exp(fam_model.trend[-1] - fam_model.trend[-13]) - 1) * 100)
+            )
+
     return {
         "brand": row["brand"],
         "family": family,
@@ -323,11 +372,13 @@ def family_detail_payload(snapshot: MarketSnapshot, slug: str) -> dict | None:
         "image": family_image(slug),
         "materials": materials,
         "dominant_material": snapshot.dominant.get(family),
+        "chg_1m_pct": chg_1m,
+        "chg_3m_pct": chg_3m,
         "tier": row["tier"],
         "signals": signals_payload_row(row),
         "history": history,
         "asking_history": asking_history,
-        "forecast": forecast_payload(snapshot.forecasts.get(family)),
+        "forecast": forecast_points,
         "recent_sales": recent_sales,
         "references": refs,
     }
@@ -361,7 +412,24 @@ def _ref_value_row(snapshot: MarketSnapshot, r: pd.Series) -> dict:
     dial = dial if (dial and pd.notna(dial)) else None
     slug = ref_slug(r["brand"], r["ref"], dial)
     parent_slug = ref_slug(r["brand"], r["ref"]) if dial else None
+
+    # Headline value comes from the hierarchical valuation model (smooth,
+    # configuration-standardized); the comps median stays as evidence
+    value = _clean_float(r["median_usd"])
+    ci_lo = _clean_float(r["p25_usd"])
+    ci_hi = _clean_float(r["p75_usd"])
+    chg_1m = None
+    node = snapshot.valuation.node_row(r["brand"], r["ref"], dial, r["family"])
+    if node is not None and node["node_type"] in ("variant", "ref"):
+        value = _clean_float(node["value"])
+        ci_lo = _clean_float(node["ci_lo"])
+        ci_hi = _clean_float(node["ci_hi"])
+        chg_1m = _clean_float(node["chg_1m_pct"])
+
+    retail = _clean_float(r["retail_usd"])
     return {
+        "comps_median_usd": _clean_float(r["median_usd"]),
+        "chg_1m_pct": chg_1m,
         "brand": r["brand"],
         "ref": r["ref"],
         "dial_variant": dial,
@@ -375,11 +443,13 @@ def _ref_value_row(snapshot: MarketSnapshot, r: pd.Series) -> dict:
         "nicknames": snapshot.nicknames_by_ref.get((r["ref"], dial or ""), []),
         "image": ref_image(slug, fam_slug, parent_slug),
         "n_sold": int(r["n_sold"]),
-        "median_usd": _clean_float(r["median_usd"]),
-        "p25_usd": _clean_float(r["p25_usd"]),
-        "p75_usd": _clean_float(r["p75_usd"]),
-        "retail_usd": _clean_float(r["retail_usd"]),
-        "premium_pct": _clean_float(r["premium_to_retail_pct"]),
+        "median_usd": value,
+        "p25_usd": ci_lo,
+        "p75_usd": ci_hi,
+        "retail_usd": retail,
+        "premium_pct": _clean_float(
+            (value / retail - 1) * 100 if (retail and value) else None
+        ),
     }
 
 
@@ -420,6 +490,61 @@ def ref_detail_payload(snapshot: MarketSnapshot, slug: str) -> dict | None:
     payload["median_ci_lo"] = _clean_float(ci_lo)
     payload["median_ci_hi"] = _clean_float(ci_hi)
 
+    # Valuation: smooth market value from the hierarchical model — the
+    # line the persona reads; individual sales are plotted as evidence
+    node = snapshot.valuation.node_row(brand, ref, dial, family)
+    payload["valuation"] = None
+    if node is not None:
+        series = snapshot.valuation.value_series(node)
+        lo, hi = snapshot.valuation.value_band(node)
+        fc = snapshot.valuation.forecast_trend(family)
+        fam_model = snapshot.valuation.families.get(family)
+        forecast_points = []
+        if fc is not None and fam_model is not None:
+            base_off = fam_model.base + node["offset"]
+            for _, r in fc.iterrows():
+                forecast_points.append(
+                    {
+                        "date": r["week"].strftime("%Y-%m-%d"),
+                        "value": _clean_float(float(np.exp(base_off + r["trend"]))),
+                        "p05": _clean_float(float(np.exp(base_off + r["p05"]))),
+                        "p95": _clean_float(float(np.exp(base_off + r["p95"]))),
+                    }
+                )
+        payload["valuation"] = {
+            "value": _clean_float(node["value"]),
+            "ci_lo": _clean_float(node["ci_lo"]),
+            "ci_hi": _clean_float(node["ci_hi"]),
+            "chg_1m_pct": _clean_float(node["chg_1m_pct"]),
+            "chg_3m_pct": _clean_float(node["chg_3m_pct"]),
+            "node_type": node["node_type"],
+            "series": [
+                {
+                    "date": d.strftime("%Y-%m-%d"),
+                    "value": _clean_float(v),
+                    "lo": _clean_float(lo.get(d)),
+                    "hi": _clean_float(hi.get(d)),
+                }
+                for d, v in series.items()
+            ],
+            "forecast": forecast_points,
+            "full_set_premium_pct": _clean_float(
+                (np.exp(snapshot.valuation.hedonics.get("full_set", 0)) - 1) * 100
+                if "full_set" in snapshot.valuation.hedonics
+                else None
+            ),
+        }
+
+    # Round-trip cost: buy at dealer ask, sell at market — the immediate
+    # loss the persona takes on a flip
+    fam_signal = snapshot.signals[snapshot.signals["family"] == family]
+    spread = (
+        _clean_float(fam_signal["ask_sold_spread_pct"].iloc[0])
+        if len(fam_signal)
+        else None
+    )
+    payload["round_trip_pct"] = spread
+
     # Individual sales as scatter points — honest at reference sample sizes
     payload["sales_points"] = [
         {
@@ -428,13 +553,6 @@ def ref_detail_payload(snapshot: MarketSnapshot, slug: str) -> dict | None:
             "method": r["match_method"],
         }
         for _, r in ref_sold.iterrows()
-    ]
-
-    # Family weekly median as market context
-    fam_weekly = family_weekly_series(snapshot, family, "sold")
-    payload["family_history"] = [
-        {"date": r["week"].strftime("%Y-%m-%d"), "median": _clean_float(r["median"])}
-        for _, r in fam_weekly.iterrows()
     ]
 
     payload["recent_sales"] = [
@@ -509,33 +627,50 @@ def overview_payload(snapshot: MarketSnapshot) -> dict:
 
 
 def buying_guide_payload(snapshot: MarketSnapshot) -> list[dict]:
-    """Rank families as purchase candidates.
+    """Rank families for a buyer who doesn't want to lose money.
 
-    Score blends: negative momentum on a non-negative trend ("dip"), low
-    volatility (stable value), tight ask/sold spread (liquid exit), and
-    discount to dealer ask. It is a screen, not advice.
+    Components, in the order the persona feels them:
+      - round-trip cost (ask/sold spread): the loss you take the day you
+        buy at dealer ask — the single biggest "losing money" mechanism
+      - smoothed 1-month trend from the valuation model: is the market for
+        this watch drifting up or bleeding?
+      - liquidity: can you actually exit near the marked price?
+    It is a screen, not advice.
     """
     rows = []
     for r in signals_payload(snapshot):
         if r["median_usd"] is None or r["n_sold"] < 30:
             continue
-        mom = r["momentum_pct"] or 0.0
-        vol = r["vol_ann_pct"]
+        fam_model = snapshot.valuation.families.get(r["family"])
+        chg_1m = None
+        if fam_model is not None and len(fam_model.trend) > 4:
+            chg_1m = float(
+                (np.exp(fam_model.trend[-1] - fam_model.trend[-5]) - 1) * 100
+            )
         spread = r["ask_sold_spread_pct"]
+
         score = 0.0
         reasons = []
-        if mom < -3:
-            score += min(-mom, 15) / 3
-            reasons.append("recent dip")
-        if vol is not None and vol < 100:
-            score += (100 - vol) / 50
-            reasons.append("stable value")
-        if spread is not None and 5 <= spread <= 25:
-            score += 1.5
-            reasons.append("liquid market")
-        if spread is not None and spread > 25:
-            score += min(spread - 25, 30) / 15
-            reasons.append("sold below dealer ask")
-        rows.append({**r, "score": round(score, 2), "reasons": reasons})
-    rows.sort(key=lambda x: x["score"], reverse=True)
+        if spread is not None:
+            if spread <= 15:
+                score += 3.0
+                reasons.append("low round-trip cost")
+            elif spread <= 25:
+                score += 1.5
+                reasons.append("moderate round-trip cost")
+        if chg_1m is not None:
+            if chg_1m >= 1.0:
+                score += 2.0
+                reasons.append("value drifting up")
+            elif chg_1m >= -1.0:
+                score += 1.0
+                reasons.append("value holding steady")
+        if r["n_sold"] >= 100:
+            score += 1.0
+            reasons.append("deep market")
+        rows.append(
+            {**r, "score": round(score, 2), "reasons": reasons,
+             "chg_1m_pct": _clean_float(chg_1m), "round_trip_pct": spread}
+        )
+    rows.sort(key=lambda x: (x["score"], -(x["round_trip_pct"] or 99)), reverse=True)
     return rows

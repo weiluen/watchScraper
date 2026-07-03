@@ -17,12 +17,12 @@
       <div class="context" id="s-median-ci"></div>
     </div>
     <div class="card stat-tile">
-      <div class="label">Robust trend</div>
+      <div class="label">Value change (smoothed)</div>
       <div class="value" id="s-trend">—</div>
       <div class="context" id="s-trend-note"></div>
     </div>
     <div class="card stat-tile">
-      <div class="label">4-week momentum</div>
+      <div class="label">3-month change (smoothed)</div>
       <div class="value" id="s-mom">—</div>
       <div class="context" id="s-vol"></div>
     </div>
@@ -35,8 +35,8 @@
 
   <div class="card">
     <div class="card-head">
-      <h2>Price history &amp; 8-week outlook</h2>
-      <span class="hint" id="chart-hint">Weekly medians · shaded regions: sold interquartile range, 90% forecast band</span>
+      <h2>Market value &amp; 8-week outlook</h2>
+      <span class="hint" id="chart-hint">Smoothed, composition-adjusted value · not a weekly median</span>
     </div>
     <div id="price-chart"></div>
   </div>
@@ -89,19 +89,18 @@ document.getElementById("s-median-ci").textContent =
   "95% CI " + fmtUSD(s.median_ci_lo, true) + " – " + fmtUSD(s.median_ci_hi, true);
 
 const trendEl = document.getElementById("s-trend");
-trendEl.textContent = s.trend_pct_mo != null ? fmtPct(s.trend_pct_mo) + "/mo" : "—";
-if (s.trend_pct_mo != null) trendEl.className = "value " + (s.trend_pct_mo > 1 ? "delta up" : s.trend_pct_mo < -1 ? "delta down" : "");
+trendEl.textContent = d.chg_1m_pct != null ? fmtPct(d.chg_1m_pct) + " / 1m" : "—";
+if (d.chg_1m_pct != null) trendEl.className = "value " +
+  (d.chg_1m_pct > 0.5 ? "delta up" : d.chg_1m_pct < -0.5 ? "delta down" : "");
 trendEl.style.fontSize = "26px";
-document.getElementById("s-trend-note").textContent =
-  s.mk_pvalue != null
-    ? (s.mk_pvalue < 0.05 ? "statistically significant (p=" : "not significant (p=") + s.mk_pvalue.toFixed(2) + ")"
-    : "insufficient history";
+document.getElementById("s-trend-note").textContent = "composition-adjusted model value";
 
 const momEl = document.getElementById("s-mom");
-momEl.textContent = s.momentum_pct != null ? fmtPct(s.momentum_pct) : "—";
-if (s.momentum_pct != null) { momEl.className = "value " + (s.momentum_pct > 0 ? "delta up" : "delta down"); momEl.style.fontSize = "26px"; }
+momEl.textContent = d.chg_3m_pct != null ? fmtPct(d.chg_3m_pct) : "—";
+if (d.chg_3m_pct != null) { momEl.className = "value " +
+  (d.chg_3m_pct > 0.5 ? "delta up" : d.chg_3m_pct < -0.5 ? "delta down" : ""); momEl.style.fontSize = "26px"; }
 document.getElementById("s-vol").textContent =
-  s.vol_ann_pct != null ? "volatility " + s.vol_ann_pct.toFixed(0) + "% annualized" : "";
+  d.chg_3m_pct != null ? "same smoothed value line as the chart" : "insufficient history";
 
 document.getElementById("s-spread").textContent =
   s.ask_sold_spread_pct != null ? "+" + s.ask_sold_spread_pct.toFixed(1) + "%" : "—";
@@ -110,13 +109,13 @@ document.getElementById("s-premium").textContent =
     ? (s.premium_to_retail_pct >= 0 ? "trades " : "trades ") + fmtPct(s.premium_to_retail_pct, false).replace("-", "−") + " vs retail"
     : "";
 
-// Chart: sold median + IQR band, asking median, forecast + 90% band
+// Chart: smooth modeled value + 95% band, dealer ask, damped outlook
 const series = [
-  { name: "Sold (median)", color: "#3987e5",
+  { name: "Modeled value", color: "#3987e5",
     points: d.history.map((p) => ({ date: p.date, value: p.median })) },
 ];
 const bands = [
-  { name: "Sold IQR", color: "#3987e5",
+  { name: "95% band", color: "#3987e5",
     points: d.history.map((p) => ({ date: p.date, lower: p.p25, upper: p.p75 })) },
 ];
 if (d.asking_history.length >= 2) {
@@ -125,10 +124,10 @@ if (d.asking_history.length >= 2) {
 }
 if (d.forecast.length && d.history.length) {
   const bridge = d.history[d.history.length - 1];
-  series.push({ name: "Forecast", color: "#9085e9", dashed: true,
+  series.push({ name: "Outlook (damped)", color: "#9085e9", dashed: true,
     points: [{ date: bridge.date, value: bridge.median },
              ...d.forecast.map((p) => ({ date: p.date, value: p.forecast }))] });
-  bands.push({ name: "90% band", color: "#9085e9",
+  bands.push({ name: "90% outlook band", color: "#9085e9",
     points: [{ date: bridge.date, lower: bridge.median, upper: bridge.median },
              ...d.forecast.map((p) => ({ date: p.date, lower: p.p05, upper: p.p95 }))] });
 }
@@ -136,8 +135,7 @@ lineChart(document.getElementById("price-chart"), { series, bands, height: 320, 
 
 if (d.dominant_material) {
   document.getElementById("chart-hint").textContent =
-    "Weekly medians within the " + d.dominant_material +
-    " stratum · shaded: sold IQR, 90% forecast band";
+    "Smoothed, composition-adjusted value (standard: full set) · sold evidence spans all materials";
 }
 
 const MATERIAL_LABELS = {

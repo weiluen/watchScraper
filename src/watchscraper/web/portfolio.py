@@ -48,13 +48,15 @@ def value_holdings(
     holdings: list[dict],
     weekly: pd.DataFrame,
     ref_values: pd.DataFrame | None = None,
+    valuation=None,
 ) -> dict:
     """Value each holding and the whole portfolio over time.
 
-    holdings: [{id, family, reference_number?, purchase_price_usd, ...}]
-    ref_values: per-reference value table (brand, ref, median_usd) — when a
-    holding's reference is priced there, the variant value wins.
-    Returns {holdings: [...], series, totals, allocation}.
+    holdings: [{id, family, reference_number?, dial_variant?, ...}]
+    valuation: the hierarchical ValuationModel — when present, every holding
+    is marked from its node's smooth value series (variant → reference →
+    family-generic), which is the composition-adjusted estimate.
+    Falls back to weekly-median panels when no model is supplied.
     """
     panel = build_family_value_panel(weekly)
 
@@ -73,18 +75,29 @@ def value_holdings(
     for h in holdings:
         family = h["family"]
         series = panel[family].dropna() if family in panel.columns else pd.Series(dtype=float)
-
-        # Variant-first: the exact (ref, dial) value scales the family series
         ref = h.get("reference_number")
         dial = h.get("dial_variant") or ""
-        ref_val = ref_median.get((h["brand"], ref, dial)) if ref else None
         priced_at = "family"
-        if ref_val is not None and len(series) and series.iloc[-1] > 0:
-            series = series * (ref_val / float(series.iloc[-1]))
-            priced_at = "reference"
-        elif ref_val is not None:
-            series = pd.Series([ref_val])  # value known, no trend series
-            priced_at = "reference"
+
+        node = None
+        if valuation is not None:
+            node = valuation.node_row(h["brand"], ref or None, dial or None, family)
+        if node is not None:
+            node_series = valuation.value_series(node)
+            if len(node_series):
+                series = node_series
+                priced_at = (
+                    "reference" if node["node_type"] in ("variant", "ref") else "family"
+                )
+        else:
+            # Legacy path: variant value scales the family weekly panel
+            ref_val = ref_median.get((h["brand"], ref, dial)) if ref else None
+            if ref_val is not None and len(series) and series.iloc[-1] > 0:
+                series = series * (ref_val / float(series.iloc[-1]))
+                priced_at = "reference"
+            elif ref_val is not None:
+                series = pd.Series([ref_val])  # value known, no trend series
+                priced_at = "reference"
 
         current = _json_float(series.iloc[-1]) if len(series) else None
         purchase = _json_float(h.get("purchase_price_usd"))

@@ -13,14 +13,14 @@
 
   <div class="row cols-4">
     <div class="card stat-tile">
-      <div class="label">Market value (this reference)</div>
+      <div class="label">Market value (full set)</div>
       <div class="value" id="s-value">—</div>
       <div class="context" id="s-value-ci"></div>
     </div>
     <div class="card stat-tile">
-      <div class="label">Typical range</div>
-      <div class="value" id="s-range" style="font-size:20px">—</div>
-      <div class="context">interquartile of clean sales</div>
+      <div class="label">Value change (smoothed)</div>
+      <div class="value" id="s-chg" style="font-size:22px">—</div>
+      <div class="context" id="s-chg-note"></div>
     </div>
     <div class="card stat-tile">
       <div class="label">vs retail</div>
@@ -28,16 +28,20 @@
       <div class="context" id="s-retail"></div>
     </div>
     <div class="card stat-tile">
-      <div class="label">Liquidity</div>
-      <div class="value" id="s-liquidity">—</div>
-      <div class="context">confidently matched sales</div>
+      <div class="label">Round-trip cost</div>
+      <div class="value" id="s-roundtrip" style="font-size:22px">—</div>
+      <div class="context">buy at dealer ask, sell at market</div>
     </div>
+  </div>
+
+  <div class="card" id="verdict-card" style="display:none">
+    <div id="verdict-text" style="color:var(--ink-2)"></div>
   </div>
 
   <div class="card">
     <div class="card-head">
-      <h2>Sales of this reference</h2>
-      <span class="hint">each dot is one sale · line is the family weekly median for context</span>
+      <h2>Market value &amp; sales evidence</h2>
+      <span class="hint">smooth line: modeled value with 95% band · dots: individual sales · dashes: damped outlook</span>
     </div>
     <div id="sales-chart"></div>
   </div>
@@ -89,39 +93,95 @@ if (d.image) {
   photo.style.display = "";
 }
 
-document.getElementById("s-value").textContent = fmtUSD(d.median_usd);
-if (d.median_ci_lo != null) {
+const v = d.valuation;
+document.getElementById("s-value").textContent = fmtUSD(v ? v.value : d.median_usd);
+if (v && v.ci_lo != null) {
   document.getElementById("s-value-ci").textContent =
-    "95% CI " + fmtUSD(d.median_ci_lo, true) + " – " + fmtUSD(d.median_ci_hi, true);
+    "95% CI " + fmtUSD(v.ci_lo, true) + " – " + fmtUSD(v.ci_hi, true) +
+    " · " + d.n_sold + " sales";
 }
-document.getElementById("s-range").textContent =
-  fmtUSD(d.p25_usd, true) + " – " + fmtUSD(d.p75_usd, true);
 
+const chgEl = document.getElementById("s-chg");
+if (v && v.chg_1m_pct != null) {
+  chgEl.textContent = fmtPct(v.chg_1m_pct) + " / 1m";
+  chgEl.className = "value delta " +
+    (v.chg_1m_pct > 0.5 ? "up" : v.chg_1m_pct < -0.5 ? "down" : "flat");
+  chgEl.style.fontSize = "22px";
+  if (v.chg_3m_pct != null) {
+    document.getElementById("s-chg-note").textContent = fmtPct(v.chg_3m_pct) + " over 3 months";
+  }
+}
+
+const value = v ? v.value : d.median_usd;
+const premium = (d.retail_usd && value) ? (value / d.retail_usd - 1) * 100 : null;
 const premEl = document.getElementById("s-premium");
-if (d.premium_pct != null) {
-  premEl.textContent = fmtPct(d.premium_pct);
-  premEl.className = "value delta " + (d.premium_pct >= 0 ? "up" : "down");
+if (premium != null) {
+  premEl.textContent = fmtPct(premium);
+  premEl.className = "value delta " + (premium >= 0 ? "up" : "down");
   premEl.style.fontSize = "26px";
   document.getElementById("s-retail").textContent = "retail " + fmtUSD(d.retail_usd);
 } else {
   premEl.textContent = "—";
   document.getElementById("s-retail").textContent = "no retail reference";
 }
-document.getElementById("s-liquidity").textContent = d.n_sold;
 
-// Chart: family median line (context) + this reference's sales as dots
+if (d.round_trip_pct != null) {
+  document.getElementById("s-roundtrip").textContent = "−" + d.round_trip_pct.toFixed(0) + "%";
+}
+
+// The buyer's verdict, in plain words
+const verdictEl = document.getElementById("verdict-text");
+const parts = [];
+if (premium != null) {
+  parts.push(premium >= 5
+    ? "Trades above retail — buying at retail you are not underwater on day one."
+    : premium >= -10
+      ? "Trades near retail — expect roughly break-even at market, minus transaction costs."
+      : "Trades " + Math.abs(premium).toFixed(0) + "% below retail — buying new means absorbing that depreciation.");
+}
+if (d.round_trip_pct != null) {
+  parts.push("Buying at a dealer ask and selling at market costs about " +
+    d.round_trip_pct.toFixed(0) + "% round-trip.");
+}
+if (v && v.chg_3m_pct != null) {
+  parts.push("Modeled value moved " + fmtPct(v.chg_3m_pct) + " over the last 3 months.");
+}
+if (parts.length) {
+  document.getElementById("verdict-card").style.display = "";
+  verdictEl.textContent = parts.join(" ");
+}
+
+// Chart: smooth modeled value + 95% band + damped outlook + sales as dots
 const series = [];
-if (d.family_history.length >= 2) {
+const bands = [];
+if (v && v.series.length >= 2) {
   series.push({
-    name: d.family + " median", color: "#898781",
-    points: d.family_history.map((p) => ({ date: p.date, value: p.median })),
+    name: "Modeled value", color: "#3987e5",
+    points: v.series.map((p) => ({ date: p.date, value: p.value })),
   });
+  bands.push({
+    name: "95% band", color: "#3987e5",
+    points: v.series.map((p) => ({ date: p.date, lower: p.lo, upper: p.hi })),
+  });
+  if (v.forecast.length) {
+    const bridge = v.series[v.series.length - 1];
+    series.push({
+      name: "Outlook (damped)", color: "#9085e9", dashed: true,
+      points: [{ date: bridge.date, value: bridge.value },
+               ...v.forecast.map((p) => ({ date: p.date, value: p.value }))],
+    });
+    bands.push({
+      name: "90% outlook band", color: "#9085e9",
+      points: [{ date: bridge.date, lower: bridge.value, upper: bridge.value },
+               ...v.forecast.map((p) => ({ date: p.date, lower: p.p05, upper: p.p95 }))],
+    });
+  }
 }
 series.push({
-  name: d.ref + " sales", color: "#3987e5", dots: true,
+  name: "Sales", color: "#199e70", dots: true,
   points: d.sales_points.map((p) => ({ date: p.date, value: p.value })),
 });
-lineChart(document.getElementById("sales-chart"), { series, height: 300, yPrefix: "$" });
+lineChart(document.getElementById("sales-chart"), { series, bands, height: 300, yPrefix: "$" });
 
 const METHOD_LABELS = {
   exact_ref: "ref", alias: "alias", nickname: "nickname",

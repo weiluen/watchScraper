@@ -2,14 +2,14 @@
 {% block title %}Buying guide{% endblock %}
 {% block content %}
   <h1>Buying guide</h1>
-  <p class="subtitle">A quantitative screen for your next purchase — families ranked by dip, price stability, exit liquidity, and discount to dealer ask. A screen, not gospel: always inspect the specific watch.</p>
+  <p class="subtitle">Ranked for a buyer who doesn't want to lose money: low round-trip cost (what you lose buying at ask and selling at market), a smoothed value trend that isn't bleeding, and a deep enough market to exit. A screen, not gospel: always inspect the specific watch.</p>
 
   <div id="candidates"></div>
 
-  <p class="footnote">Score components: <strong>recent dip</strong> = negative 4-week momentum (buying weakness, not chasing);
-  <strong>stable value</strong> = low annualized volatility of weekly medians; <strong>liquid market</strong> = healthy 5–25% ask/sold
-  spread with real sales volume; <strong>sold below dealer ask</strong> = realized prices far under Chrono24 asking, i.e. private-sale
-  discount. Minimum 30 clean sales required.</p>
+  <p class="footnote">Score components: <strong>round-trip cost</strong> = Chrono24 dealer ask over realized sold prices — the loss
+  you take buying at ask and selling at market the same day; <strong>value trend</strong> = 1-month change of the smoothed,
+  composition-adjusted model value (not raw weekly medians); <strong>deep market</strong> = 100+ clean sales, so the marked value is
+  real and you can exit near it. Minimum 30 clean sales required.</p>
 {% endblock %}
 
 {% block scripts %}
@@ -69,8 +69,11 @@ candidates.slice(0, 12).forEach((c, i) => {
   price.textContent = fmtUSD(c.median_usd);
   const meta = document.createElement("div");
   meta.style.cssText = "color:var(--ink-muted);font-size:12px";
-  const momTxt = c.momentum_pct != null ? fmtPct(c.momentum_pct) + " last 4w" : "";
-  meta.textContent = momTxt + (momTxt ? " · " : "") + c.n_sold + " sales";
+  const bits = [];
+  if (c.round_trip_pct != null) bits.push("−" + c.round_trip_pct.toFixed(0) + "% round-trip");
+  if (c.chg_1m_pct != null) bits.push(fmtPct(c.chg_1m_pct) + " /1m");
+  bits.push(c.n_sold + " sales");
+  meta.textContent = bits.join(" · ");
   stats.append(price, meta);
 
   if (img) card.append(rank, img, name, spark, stats);
