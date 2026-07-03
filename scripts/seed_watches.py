@@ -526,6 +526,7 @@ def run_seed() -> None:
                 select(Watch).where(
                     Watch.brand_id == brand_id,
                     Watch.reference_number == ref,
+                    Watch.dial_variant.is_(None),
                 )
             ).scalar_one_or_none()
 
@@ -558,6 +559,7 @@ def run_seed() -> None:
                 select(Watch).where(
                     Watch.brand_id == brand_id,
                     Watch.reference_number == ref,
+                    Watch.dial_variant.is_(None),
                 )
             ).scalar_one_or_none()
             if existing:

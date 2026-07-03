@@ -132,7 +132,7 @@ class TestNickname:
         r = matcher.match("Rolex Submariner Hulk full set 2016")
         assert r.watch_id == 4
         assert r.method == "nickname"
-        assert r.confidence == 0.80
+        assert r.confidence == 0.60
 
     def test_hulk_vs_starbucks_are_different_watches(self, matcher):
         hulk = matcher.match("Rolex Submariner Hulk")
@@ -145,18 +145,18 @@ class TestNickname:
         new = matcher.match("Rolex GMT Batman 2022")
         assert old.watch_id == 11
         assert new.watch_id == 10
-        assert old.confidence == 0.80
+        assert old.confidence == 0.60
 
     def test_batman_jubilee_hint(self, matcher):
         r = matcher.match("Rolex GMT-Master II Batman jubilee bracelet")
         assert r.watch_id == 10
-        assert r.confidence == 0.75
+        assert r.confidence == 0.55
 
     def test_batman_no_hints_defaults_to_current_gen(self, matcher):
         r = matcher.match("Rolex GMT Batman")
         assert r.watch_id == 10
         assert r.method == "nickname_default_gen"
-        assert r.confidence == 0.55
+        assert r.confidence == 0.50
 
     def test_pepsi_vintage_vs_modern(self, matcher):
         vintage = matcher.match("Rolex GMT Master II Pepsi 1995")
@@ -209,6 +209,22 @@ class TestFamilyPropagation:
 
 class TestNicknameSafety:
     """Regression tests for real mismatches found in scraped data."""
+
+    def test_nickname_only_never_prices_a_variant(self, matcher):
+        # "John Mayer" spans multiple references with very different
+        # markets — a nickname without a reference must stay below the
+        # pricing threshold so it can never tie a sale to a price point.
+        from watchscraper.analysis import REF_VALUE_MIN_CONFIDENCE
+
+        for title in [
+            "Rolex Submariner Hulk full set",
+            "Rolex GMT Batman 2022",
+            "Rolex GMT-Master II Batman jubilee bracelet",
+            "Rolex GMT Batman",
+        ]:
+            r = matcher.match(title)
+            assert r.method.startswith("nickname")
+            assert r.confidence < REF_VALUE_MIN_CONFIDENCE, title
 
     def test_nickname_never_crosses_brands(self, matcher):
         # "panda dial" on an Omega must not match the Rolex Daytona Panda

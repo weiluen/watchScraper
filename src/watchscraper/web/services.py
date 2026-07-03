@@ -89,6 +89,7 @@ class MarketSnapshot:
     valuation: ValuationModel = field(default_factory=ValuationModel)
     ref_values: pd.DataFrame = field(default_factory=pd.DataFrame)
     nicknames_by_ref: dict[tuple[str, str], list[str]] = field(default_factory=dict)
+    catalog_watches: pd.DataFrame = field(default_factory=pd.DataFrame)
     computed_at: float = field(default_factory=time.time)
 
     def family_row(self, slug: str) -> pd.Series | None:
@@ -136,6 +137,17 @@ def get_market(refresh: bool = False) -> MarketSnapshot:
                 index = build_market_index(weekly)
             index_fc = forecast_series(index) if not index.empty else None
             forecasts = forecast_families(dom_weekly)
+            catalog_watches = pd.read_sql(
+                sa_text("""
+                    SELECT b.name AS brand, w.reference_number AS ref,
+                           w.dial_variant, w.family, w.case_material,
+                           w.production_start_year AS start_year,
+                           w.production_end_year AS end_year,
+                           w.retail_price_usd / 100.0 AS retail_usd
+                    FROM watches w JOIN brands b ON b.id = w.brand_id
+                """),
+                engine,
+            )
             nick_rows = pd.read_sql(
                 sa_text("""
                     SELECT w.reference_number AS ref,
@@ -164,6 +176,7 @@ def get_market(refresh: bool = False) -> MarketSnapshot:
                 valuation=valuation,
                 ref_values=reference_values(df),
                 nicknames_by_ref=nicknames_by_ref,
+                catalog_watches=catalog_watches,
             )
     return _snapshot
 
@@ -566,7 +579,46 @@ def ref_detail_payload(snapshot: MarketSnapshot, slug: str) -> dict | None:
         for _, r in ref_sold.sort_values("event_date", ascending=False).head(25).iterrows()
     ]
 
-    # Sibling variants: the family's other priced references
+    # THE VARIANT MATRIX: every cataloged variant of this reference —
+    # each dial is its own market with its own value, or an honest
+    # "no cleared sales yet". Nothing is averaged across variants.
+    variants = []
+    if not snapshot.catalog_watches.empty:
+        same_ref = snapshot.catalog_watches[
+            (snapshot.catalog_watches["brand"] == brand)
+            & (snapshot.catalog_watches["ref"] == ref)
+            & (snapshot.catalog_watches["dial_variant"].notna())
+        ]
+        for _, w in same_ref.iterrows():
+            w_dial = w["dial_variant"]
+            node = None
+            if not snapshot.valuation.nodes.empty:
+                hits = snapshot.valuation.nodes[
+                    (snapshot.valuation.nodes["brand"] == brand)
+                    & (snapshot.valuation.nodes["ref"] == ref)
+                    & (snapshot.valuation.nodes["dial_variant"] == w_dial)
+                ]
+                node = hits.iloc[0] if len(hits) else None
+            v_slug = ref_slug(brand, ref, w_dial)
+            priced = snapshot.ref_row(v_slug) is not None
+            variants.append(
+                {
+                    "dial": w_dial,
+                    "material": w["case_material"],
+                    "slug": v_slug if priced else None,
+                    "current_page": w_dial == dial,
+                    "value": _clean_float(node["value"]) if node is not None else None,
+                    "ci_lo": _clean_float(node["ci_lo"]) if node is not None else None,
+                    "ci_hi": _clean_float(node["ci_hi"]) if node is not None else None,
+                    "n": int(node["n"]) if node is not None else 0,
+                    "retail": _clean_float(w["retail_usd"]),
+                    "nicknames": snapshot.nicknames_by_ref.get((ref, w_dial), []),
+                }
+            )
+        variants.sort(key=lambda x: -(x["value"] or 0))
+    payload["variants"] = variants
+
+    # Related references in the family (other refs, best-priced variant each)
     siblings = snapshot.ref_values[
         (snapshot.ref_values["family"] == family)
         & (snapshot.ref_values["ref"] != ref)

@@ -11,13 +11,15 @@ through ordered rules, each with a confidence and a recorded method:
                          purchase years) but rarely invent reference numbers.
   2. alias      (0.90)  Alternate spellings that map 1:1 to a reference
                          (long-form AP refs, Patek dash suffixes).
-  3. nickname   (0.80)  Community names ("Hulk", "Batman", "Pepsi") resolved
-                         through the nickname table. Where a nickname spans
-                         generations, the stated year picks the reference;
-                         with no year, bracelet/attribute hints are tried,
-                         then the current-production generation wins at
-                         reduced confidence (0.55) — most listings are the
-                         newer watch.
+  3. nickname   (0.60)  Community names ("Hulk", "Batman", "John Mayer")
+                         resolved through the nickname table — capped BELOW
+                         the pricing threshold. A nickname is a marketing
+                         label, not an identity: "John Mayer" spans two
+                         references with very different markets. Nickname
+                         matches place a listing in its family for search
+                         and context, but only physical identity (an
+                         explicit reference, or attribute narrowing) may
+                         tie a sale to a price point.
   4. attributes (0.65)  No ref, no nickname: the family plus extracted
                          attributes (size, material class, dial, bezel,
                          date/no-date, year window) must narrow the family's
@@ -464,14 +466,17 @@ class Matcher:
             candidates = [e for e in candidates if e.brand_slug == brand_slug]
         if not candidates:
             return None
+        # NOTE: every nickname-only confidence sits below the pricing
+        # threshold (0.65). Without a reference in the title, a nickname
+        # identifies a family and a likely watch — never a price point.
         if len(candidates) == 1:
-            return MatchResult(candidates[0].watch_id, "nickname", 0.80)
+            return MatchResult(candidates[0].watch_id, "nickname", 0.60)
 
         # Generation disambiguation: the stated year picks the window
         if year:
             in_window = [e for e in candidates if e.year_ok(year)]
             if len(in_window) == 1:
-                return MatchResult(in_window[0].watch_id, "nickname", 0.80)
+                return MatchResult(in_window[0].watch_id, "nickname", 0.60)
             if not in_window:
                 # The year falls outside every known generation (e.g. a 1969
                 # "Pepsi" when the catalog starts at 1981) — matching any
@@ -486,12 +491,12 @@ class Matcher:
                 e for e in candidates if e.bracelet and bracelet in e.bracelet
             ]
             if len(with_bracelet) == 1:
-                return MatchResult(with_bracelet[0].watch_id, "nickname", 0.75)
+                return MatchResult(with_bracelet[0].watch_id, "nickname", 0.55)
 
         # Default: the current-production generation, at reduced confidence
         current = [e for e in candidates if e.is_current()]
         if len(current) == 1:
-            return MatchResult(current[0].watch_id, "nickname_default_gen", 0.55)
+            return MatchResult(current[0].watch_id, "nickname_default_gen", 0.50)
         return MatchResult(candidates[0].watch_id, "nickname_ambiguous", 0.45)
 
     def _match_attributes(

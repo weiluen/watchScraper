@@ -46,6 +46,17 @@
     <div id="sales-chart"></div>
   </div>
 
+  <div class="card" id="variants-card" style="display:none">
+    <div class="card-head">
+      <h2>Every variant of this reference</h2>
+      <span class="hint">each dial is its own market — values are never averaged across variants</span>
+    </div>
+    <table class="data">
+      <thead><tr><th>Dial</th><th>Material</th><th class="num">Market value</th><th class="num">95% CI</th><th class="num">Sales</th><th class="num">Retail</th></tr></thead>
+      <tbody id="variants-body"></tbody>
+    </table>
+  </div>
+
   <div class="row split-main">
     <div class="card">
       <div class="card-head"><h2>Recent sales</h2><span class="hint">match method shown</span></div>
@@ -55,7 +66,7 @@
       </table>
     </div>
     <div class="card">
-      <div class="card-head"><h2>Other variants</h2><span class="hint" id="fam-link"></span></div>
+      <div class="card-head"><h2>Related references</h2><span class="hint" id="fam-link"></span></div>
       <table class="data">
         <thead><tr><th>Ref</th><th class="num">Value</th></tr></thead>
         <tbody id="siblings-body"></tbody>
@@ -182,6 +193,60 @@ series.push({
   points: d.sales_points.map((p) => ({ date: p.date, value: p.value })),
 });
 lineChart(document.getElementById("sales-chart"), { series, bands, height: 300, yPrefix: "$" });
+
+// The variant matrix: every cataloged dial of this reference
+if (d.variants && d.variants.length) {
+  document.getElementById("variants-card").style.display = "";
+  const body = document.getElementById("variants-body");
+  for (const va of d.variants) {
+    const tr = document.createElement("tr");
+    if (va.current_page) tr.style.background = "rgba(57,135,229,0.07)";
+    if (va.slug && !va.current_page) {
+      tr.style.cursor = "pointer";
+      tr.addEventListener("click", () => location.href = "/refs/" + va.slug);
+    }
+    const tdDial = document.createElement("td");
+    const strong = document.createElement("strong");
+    strong.textContent = va.dial;
+    tdDial.appendChild(strong);
+    if (va.current_page) {
+      const you = document.createElement("span");
+      you.style.cssText = "color:var(--series-1);font-size:11px;margin-left:8px";
+      you.textContent = "this page";
+      tdDial.appendChild(you);
+    }
+    if (va.nicknames.length) {
+      const nick = document.createElement("span");
+      nick.style.cssText = "color:var(--accent-gold);font-size:11px;margin-left:8px";
+      nick.textContent = "“" + va.nicknames.join("”, “") + "”";
+      tdDial.appendChild(nick);
+    }
+    const tdMat = document.createElement("td");
+    tdMat.textContent = va.material || "—";
+    const tdVal = document.createElement("td");
+    tdVal.className = "num";
+    if (va.value != null) {
+      const s = document.createElement("strong");
+      s.textContent = fmtUSD(va.value);
+      tdVal.appendChild(s);
+    } else {
+      tdVal.textContent = "no cleared sales yet";
+      tdVal.style.color = "var(--ink-muted)";
+    }
+    const tdCI = document.createElement("td");
+    tdCI.className = "num";
+    tdCI.textContent = va.ci_lo != null
+      ? fmtUSD(va.ci_lo, true) + " – " + fmtUSD(va.ci_hi, true) : "—";
+    const tdN = document.createElement("td");
+    tdN.className = "num";
+    tdN.textContent = va.n || "—";
+    const tdRetail = document.createElement("td");
+    tdRetail.className = "num";
+    tdRetail.textContent = va.retail != null ? fmtUSD(va.retail, true) : "—";
+    tr.append(tdDial, tdMat, tdVal, tdCI, tdN, tdRetail);
+    body.appendChild(tr);
+  }
+}
 
 const METHOD_LABELS = {
   exact_ref: "ref", alias: "alias", nickname: "nickname",

@@ -87,6 +87,7 @@ REF_METADATA: dict[tuple[str, str], RefMeta] = {
     ("rolex", "126518LN"): RefMeta("Daytona", 2023, None, (), "Black", "Oysterflex", False),
     ("rolex", "126519LN"): RefMeta("Daytona", 2023, None, (), "Black", "Oysterflex", False),
     ("rolex", "126509"): RefMeta("Daytona", 2023, None, (), "Black", "Oyster", False),
+    ("rolex", "126508"): RefMeta("Daytona", 2023, None, (), "Black", "Oyster", False),
 
     # ══ ROLEX — GMT-Master (II) ══
     ("rolex", "126710BLNR"): RefMeta("GMT-Master II", 2019, None, ("Batman", "Batgirl"), "Blue/Black", "Jubilee/Oyster", True),
@@ -228,6 +229,7 @@ ADDITIONAL_WATCHES: list[tuple] = [
     ("rolex", "16610LV", "Submariner Date Kermit (2003-2010)", 40, "Stainless Steel", "Black", "3135", 715000),
     ("rolex", "116619LB", "Submariner Date Smurf (2008-2020)", 40, "White Gold", "Blue", "3135", 3935000),
     ("rolex", "1675", "GMT-Master (1959-1980)", 40, "Stainless Steel", "Black", "1575", None),
+    ("rolex", "126508", "Cosmograph Daytona Yellow Gold (2023+)", 40, "Yellow Gold", "Black", "4131", 4420000),
     ("omega", "311.30.42.30.01.005", "Speedmaster Moonwatch Professional (2014-2021)", 42, "Stainless Steel", "Black", "1861", 532500),
 ]
 
@@ -277,6 +279,15 @@ REF_VARIANTS: dict[tuple[str, str], tuple[DialVariant, ...]] = {
     ("rolex", "126518LN"): (
         DialVariant("Golden", match_terms=("gold", "champagne")),
         DialVariant("Green"),
+        DialVariant("Black"),
+    ),
+    # New-gen yellow-gold Daytona on oyster: the green dial is ALSO called
+    # "John Mayer" in the market — the nickname spans two references with
+    # different price points, which is exactly why nicknames never price.
+    ("rolex", "126508"): (
+        DialVariant("Green", nicknames=("John Mayer",)),
+        DialVariant("Champagne", match_terms=("gold",)),
+        DialVariant("White"),
         DialVariant("Black"),
     ),
     ("rolex", "126519LN"): (
