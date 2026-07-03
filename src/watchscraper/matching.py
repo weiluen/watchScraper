@@ -47,9 +47,10 @@ CURRENT_YEAR = 2026
 _YEAR_RE = re.compile(r"(?<![\d.])(19[4-9]\d|20[0-4]\d)(?![\d.])")
 _SIZE_RE = re.compile(r"\b(\d{2}(?:\.\d)?)\s?mm\b", re.IGNORECASE)
 _DIAL_RE = re.compile(
-    r"\b(black|white|blue|green|grey|gray|silver|champagne|chocolate|brown|"
-    r"salmon|ice blue|olive|golden|gold|rhodium|slate|meteorite|panda|cream|"
-    r"tiffany)\s+(?:colou?r\s+)?dial",
+    r"\b(mother of pearl|ice blue|black|white|blue|green|grey|gray|silver|"
+    r"champagne|chocolate|brown|salmon|olive|golden|gold|rhodium|slate|"
+    r"meteorite|panda|cream|tiffany|pink|rose|ivory|sundust|turquoise|steel)"
+    r"\s+(?:colou?r\s+)?(?:index\s+)?dial",
     re.IGNORECASE,
 )
 _BEZEL_RE = re.compile(
@@ -124,7 +125,13 @@ def extract_ref_candidates(title: str, brand_slug: str | None = None) -> list[st
     for pattern in _REF_CANDIDATE_PATTERNS:
         for m in pattern.finditer(title):
             raw = m.group(0)
-            add(normalize_reference(raw, brand_slug).upper(), candidates)
+            cleaned = re.sub(r"\s+", "", raw).upper()
+            normalized = normalize_reference(raw, brand_slug).upper()
+            # The un-normalized form first: a Patek dash suffix (5711/1A-014)
+            # pins the exact dial variant and must win over the bare ref.
+            if cleaned != normalized:
+                add(cleaned, candidates)
+            add(normalized, candidates)
             if " " in raw:
                 digits = re.match(r"1\d{4,5}", raw)
                 if digits:
@@ -198,6 +205,7 @@ class CatalogEntry:
     bezel: str | None
     bracelet: str | None
     has_date: bool | None
+    dial_variant: str | None = None  # set = this entry IS a dial variant
 
     def year_ok(self, year: int, tolerance: int = 1) -> bool:
         if self.start is not None and year < self.start - tolerance:
@@ -239,13 +247,30 @@ class Matcher:
         entries: list[CatalogEntry],
         aliases: dict[str, int],
         nicknames: dict[str, list[int]],
+        dial_terms: dict[tuple[str, str, str], str] | None = None,
     ) -> None:
         self.entries = entries
         self.by_id = {e.watch_id: e for e in entries}
         self.by_ref: dict[str, list[CatalogEntry]] = {}
         for e in entries:
             self.by_ref.setdefault(e.ref.upper(), []).append(e)
-        self.aliases = {normalize_reference(a).upper(): wid for a, wid in aliases.items()}
+        # (brand_slug, REF, listing dial term) -> canonical variant dial
+        if dial_terms is None:
+            from watchscraper.catalog import REF_VARIANTS
+
+            dial_terms = {}
+            for (slug, ref), variants in REF_VARIANTS.items():
+                for v in variants:
+                    for term in (v.dial, *v.match_terms):
+                        dial_terms[(slug, ref.upper(), term.lower())] = v.dial
+        self.dial_terms = dial_terms
+        # Alias keys keep their raw (whitespace-stripped) form too, because
+        # a Patek dash suffix pins the dial variant and normalization would
+        # strip it: 5711/1A-014 must stay findable.
+        self.aliases = {}
+        for a, wid in aliases.items():
+            self.aliases[normalize_reference(a).upper()] = wid
+            self.aliases[re.sub(r"\s+", "", a).upper()] = wid
         self.nicknames = {n.lower(): wids for n, wids in nicknames.items()}
         self._nickname_re = (
             re.compile(
@@ -281,6 +306,7 @@ class Matcher:
                 bezel=(w.bezel or "").lower() or None,
                 bracelet=(w.bracelet or "").lower() or None,
                 has_date=w.has_date,
+                dial_variant=w.dial_variant,
             )
             for w, slug in rows
         ]
@@ -360,17 +386,63 @@ class Matcher:
             if brand_slug:
                 brand_matches = [e for e in entries if e.brand_slug == brand_slug]
                 entries = brand_matches or entries
+
+            entry = None
+            confidence = 0.95
             if len(entries) == 1:
                 entry = entries[0]
+            elif len(entries) > 1 and len({e.brand_slug for e in entries}) == 1:
+                entry, confidence = self._resolve_dial_variant(entries, title, attrs)
+
+            if entry is not None:
                 if year and entry.has_window() and not entry.year_ok(year):
                     attrs["year_conflict"] = True
-                    return MatchResult(entry.watch_id, "exact_ref", 0.80)
-                return MatchResult(entry.watch_id, "exact_ref", 0.95)
+                    return MatchResult(entry.watch_id, "exact_ref", min(confidence, 0.80))
+                return MatchResult(entry.watch_id, "exact_ref", confidence)
 
             watch_id = self.aliases.get(normalized)
             if watch_id:
                 return MatchResult(watch_id, "alias", 0.90)
         return None
+
+    def _resolve_dial_variant(
+        self, entries: list[CatalogEntry], title: str, attrs: dict
+    ) -> tuple[CatalogEntry | None, float]:
+        """Pick the dial variant of a multi-dial reference.
+
+        A variant nickname in the title ("John Mayer") is decisive; then the
+        parsed dial term; otherwise the parent bucket takes the record at
+        reduced confidence — a 116508 of unknown dial is still a 116508, but
+        it must never price a specific variant.
+        """
+        parent = next((e for e in entries if e.dial_variant is None), None)
+        children = [e for e in entries if e.dial_variant is not None]
+        if not children:
+            return (parent, 0.95) if parent else (None, 0.0)
+
+        if self._nickname_re:
+            m = self._nickname_re.search(title)
+            if m:
+                ids = set(self.nicknames.get(m.group(1).lower(), []))
+                named = [c for c in children if c.watch_id in ids]
+                if len(named) == 1:
+                    return named[0], 0.95
+
+        dial = attrs.get("dial")
+        if dial:
+            key_brand = children[0].brand_slug
+            key_ref = children[0].ref.upper()
+            canonical = self.dial_terms.get((key_brand, key_ref, dial.lower()))
+            if canonical:
+                for c in children:
+                    if c.dial_variant == canonical:
+                        return c, 0.92
+            # A dial was stated but matches no known variant of this ref —
+            # park it on the parent rather than guess.
+            attrs["dial_unrecognized"] = dial
+
+        attrs["dial_unresolved"] = True
+        return parent, 0.85
 
     def _match_nickname(
         self, text: str, brand_slug: str | None, year: int | None, attrs: dict

@@ -55,10 +55,14 @@ def family_image(slug: str) -> str | None:
     return None
 
 
-def ref_image(slug: str, family_slug: str | None = None) -> str | None:
-    """The reference's own image, falling back to its family's."""
+def ref_image(
+    slug: str, family_slug: str | None = None, parent_slug: str | None = None
+) -> str | None:
+    """The watch's own image, falling back variant → reference → family."""
     if (_static_dir() / "img" / "refs" / f"{slug}.jpg").exists():
         return f"/static/img/refs/{slug}.jpg"
+    if parent_slug and (_static_dir() / "img" / "refs" / f"{parent_slug}.jpg").exists():
+        return f"/static/img/refs/{parent_slug}.jpg"
     return family_image(family_slug) if family_slug else None
 
 
@@ -72,7 +76,7 @@ class MarketSnapshot:
     forecasts: dict[str, pd.DataFrame]
     report: dict
     ref_values: pd.DataFrame = field(default_factory=pd.DataFrame)
-    nicknames_by_ref: dict[str, list[str]] = field(default_factory=dict)
+    nicknames_by_ref: dict[tuple[str, str], list[str]] = field(default_factory=dict)
     computed_at: float = field(default_factory=time.time)
 
     def family_row(self, slug: str) -> pd.Series | None:
@@ -82,14 +86,16 @@ class MarketSnapshot:
         return None
 
     def ref_row(self, slug: str) -> pd.Series | None:
-        """Find a priced reference by its slug (brand + ref, slugified)."""
+        """Find a priced watch by its slug (brand + ref + dial variant)."""
         for _, row in self.ref_values.iterrows():
-            if ref_slug(row["brand"], row["ref"]) == slug:
+            if ref_slug(row["brand"], row["ref"], row.get("dial_variant")) == slug:
                 return row
         return None
 
 
-def ref_slug(brand: str, ref: str) -> str:
+def ref_slug(brand: str, ref: str, dial_variant: str | None = None) -> str:
+    if dial_variant and pd.notna(dial_variant):
+        return slugify(f"{brand} {ref} {dial_variant}")
     return slugify(f"{brand} {ref}")
 
 
@@ -113,14 +119,18 @@ def get_market(refresh: bool = False) -> MarketSnapshot:
             forecasts = forecast_families(weekly)
             nick_rows = pd.read_sql(
                 sa_text("""
-                    SELECT w.reference_number AS ref, n.nickname
+                    SELECT w.reference_number AS ref,
+                           COALESCE(w.dial_variant, '') AS dial,
+                           n.nickname
                     FROM watch_nicknames n JOIN watches w ON w.id = n.watch_id
                 """),
                 engine,
             )
-            nicknames_by_ref: dict[str, list[str]] = {}
+            nicknames_by_ref: dict[tuple[str, str], list[str]] = {}
             for _, r in nick_rows.iterrows():
-                nicknames_by_ref.setdefault(r["ref"], []).append(r["nickname"])
+                nicknames_by_ref.setdefault((r["ref"], r["dial"]), []).append(
+                    r["nickname"]
+                )
             _snapshot = MarketSnapshot(
                 df=df,
                 weekly=weekly,
@@ -261,19 +271,15 @@ def family_detail_payload(snapshot: MarketSnapshot, slug: str) -> dict | None:
             snapshot.ref_values["family"] == family
         ].sort_values("n_sold", ascending=False)
         for _, r in fam_refs.head(15).iterrows():
-            start = r["start_year"]
-            end = r["end_year"]
-            years = None
-            if pd.notna(start):
-                years = f"{int(start)}–{int(end) if pd.notna(end) else 'now'}"
+            row_payload = _ref_value_row(snapshot, r)
             refs.append(
                 {
-                    "ref": r["ref"],
-                    "slug": ref_slug(r["brand"], r["ref"]),
-                    "image": ref_image(ref_slug(r["brand"], r["ref"]), slug),
+                    "ref": row_payload["display_ref"],
+                    "slug": row_payload["slug"],
+                    "image": row_payload["image"],
                     "model": r["model"],
-                    "years": years,
-                    "nicknames": snapshot.nicknames_by_ref.get(r["ref"], []),
+                    "years": row_payload["years"],
+                    "nicknames": row_payload["nicknames"],
                     "n": int(r["n_sold"]),
                     "median": _clean_float(r["median_usd"]),
                     "p25": _clean_float(r["p25_usd"]),
@@ -322,18 +328,23 @@ def _years_label(start, end) -> str | None:
 
 def _ref_value_row(snapshot: MarketSnapshot, r: pd.Series) -> dict:
     fam_slug = slugify(r["family"]) if r["family"] else None
-    slug = ref_slug(r["brand"], r["ref"])
+    dial = r.get("dial_variant")
+    dial = dial if (dial and pd.notna(dial)) else None
+    slug = ref_slug(r["brand"], r["ref"], dial)
+    parent_slug = ref_slug(r["brand"], r["ref"]) if dial else None
     return {
         "brand": r["brand"],
         "ref": r["ref"],
+        "dial_variant": dial,
+        "display_ref": f"{r['ref']} · {dial} dial" if dial else r["ref"],
         "slug": slug,
         "model": r["model"],
         "family": r["family"],
         "family_slug": fam_slug,
         "years": _years_label(r["start_year"], r["end_year"]),
         "current": pd.isna(r["end_year"]) and pd.notna(r["start_year"]),
-        "nicknames": snapshot.nicknames_by_ref.get(r["ref"], []),
-        "image": ref_image(slug, fam_slug),
+        "nicknames": snapshot.nicknames_by_ref.get((r["ref"], dial or ""), []),
+        "image": ref_image(slug, fam_slug, parent_slug),
         "n_sold": int(r["n_sold"]),
         "median_usd": _clean_float(r["median_usd"]),
         "p25_usd": _clean_float(r["p25_usd"]),
@@ -358,6 +369,7 @@ def ref_detail_payload(snapshot: MarketSnapshot, slug: str) -> dict | None:
         return None
     payload = _ref_value_row(snapshot, row)
     brand, ref, family = row["brand"], row["ref"], row["family"]
+    dial = payload["dial_variant"]
 
     from watchscraper.analysis import REF_VALUE_MIN_CONFIDENCE
     from watchscraper.quant import bootstrap_median_ci
@@ -366,6 +378,11 @@ def ref_detail_payload(snapshot: MarketSnapshot, slug: str) -> dict | None:
     ref_sold = clean[
         (clean["linked_ref"] == ref)
         & (clean["linked_brand"] == brand)
+        & (
+            clean["linked_dial"] == dial
+            if dial
+            else clean["linked_dial"].isna()
+        )
         & (clean["price_type"] == "sold")
         & (clean["match_confidence"].fillna(0) >= REF_VALUE_MIN_CONFIDENCE)
     ].sort_values("event_date")

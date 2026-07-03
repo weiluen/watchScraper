@@ -53,10 +53,17 @@ def page_ref(request: Request, slug: str):
     row = snapshot.ref_row(slug)
     if row is None:
         raise HTTPException(404, "Unknown reference")
+    dial = row.get("dial_variant")
     return templates.TemplateResponse(
         request,
         "ref.html",
-        {"nav": "watches", "slug": slug, "ref": row["ref"], "brand": row["brand"]},
+        {
+            "nav": "watches",
+            "slug": slug,
+            "ref": row["ref"],
+            "brand": row["brand"],
+            "dial": dial if (dial and not (isinstance(dial, float))) else None,
+        },
     )
 
 
@@ -117,6 +124,7 @@ class HoldingIn(BaseModel):
     family: str = Field(min_length=1, max_length=100)
     nickname: str | None = Field(default=None, max_length=200)
     reference_number: str | None = Field(default=None, max_length=50)
+    dial_variant: str | None = Field(default=None, max_length=50)
     purchase_price_usd: float | None = Field(default=None, gt=0)
     purchase_date: date | None = None
     condition: str | None = Field(default=None, max_length=20)
@@ -134,6 +142,7 @@ def _holding_dicts() -> list[dict]:
                 "brand": r.brand,
                 "family": r.family,
                 "reference_number": r.reference_number,
+                "dial_variant": r.dial_variant,
                 "purchase_price_usd": r.purchase_price_usd,
                 "purchase_date": r.purchase_date,
                 "condition": r.condition,

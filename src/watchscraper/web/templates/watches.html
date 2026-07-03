@@ -76,8 +76,8 @@ const state = { q: "", brand: "", tier: "", sort: "median_desc", table: false, m
 
 function searchText(item) {
   if (state.mode === "refs") {
-    return [item.ref, item.brand, item.family, item.model, ...(item.nicknames || [])]
-      .join(" ").toLowerCase();
+    return [item.ref, item.dial_variant || "", item.brand, item.family, item.model,
+            ...(item.nicknames || [])].join(" ").toLowerCase();
   }
   return (item.family + " " + item.brand).toLowerCase();
 }
@@ -119,7 +119,7 @@ function renderRefCards(rows, grid) {
     brand.textContent = r.brand + " · " + (r.family || "");
     const fam = document.createElement("div");
     fam.className = "family";
-    fam.textContent = r.ref;
+    fam.textContent = r.display_ref || r.ref;
     if (r.nicknames.length) {
       const nick = document.createElement("span");
       nick.style.cssText = "color:var(--accent-gold);font-size:12px;font-weight:500;margin-left:7px";
@@ -174,7 +174,7 @@ function renderRefTable(rows) {
     tr.style.cursor = "pointer";
     tr.addEventListener("click", () => location.href = "/refs/" + r.slug);
     const cells = [
-      [r.brand + " " + r.ref, false],
+      [r.brand + " " + (r.display_ref || r.ref), false],
       [r.family || "—", false],
       [r.years || "—", false],
       [r.nicknames.join(", ") || "—", false],

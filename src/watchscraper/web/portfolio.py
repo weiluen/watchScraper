@@ -58,13 +58,14 @@ def value_holdings(
     """
     panel = build_family_value_panel(weekly)
 
-    ref_median: dict[tuple[str, str], float] = {}
+    ref_median: dict[tuple[str, str, str], float] = {}
     if ref_values is not None and not ref_values.empty:
-        ref_median = {
-            (r["brand"], r["ref"]): float(r["median_usd"])
-            for _, r in ref_values.iterrows()
-            if pd.notna(r["median_usd"])
-        }
+        for _, r in ref_values.iterrows():
+            if pd.isna(r["median_usd"]):
+                continue
+            dial = r.get("dial_variant")
+            dial = dial if (dial and pd.notna(dial)) else ""
+            ref_median[(r["brand"], r["ref"], dial)] = float(r["median_usd"])
 
     per_holding = []
     portfolio_series: pd.Series | None = None
@@ -73,9 +74,10 @@ def value_holdings(
         family = h["family"]
         series = panel[family].dropna() if family in panel.columns else pd.Series(dtype=float)
 
-        # Reference-first: the variant's own value scales the family series
+        # Variant-first: the exact (ref, dial) value scales the family series
         ref = h.get("reference_number")
-        ref_val = ref_median.get((h["brand"], ref)) if ref else None
+        dial = h.get("dial_variant") or ""
+        ref_val = ref_median.get((h["brand"], ref, dial)) if ref else None
         priced_at = "family"
         if ref_val is not None and len(series) and series.iloc[-1] > 0:
             series = series * (ref_val / float(series.iloc[-1]))
@@ -97,6 +99,7 @@ def value_holdings(
                 "brand": h["brand"],
                 "family": family,
                 "reference_number": h.get("reference_number"),
+                "dial_variant": h.get("dial_variant"),
                 "purchase_price_usd": purchase,
                 "purchase_date": (
                     h["purchase_date"].isoformat() if h.get("purchase_date") else None

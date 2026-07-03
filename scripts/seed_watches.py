@@ -5,7 +5,7 @@ import logging
 from sqlalchemy import select
 
 from watchscraper.analysis import _match_family
-from watchscraper.catalog import ADDITIONAL_WATCHES, all_metadata
+from watchscraper.catalog import ADDITIONAL_WATCHES, REF_VARIANTS, all_metadata
 from watchscraper.database import get_session
 from watchscraper.models import Brand, Source, Watch, WatchAlias, WatchNickname
 
@@ -605,9 +605,13 @@ def run_seed() -> None:
                     derived += 1
         logger.info("Metadata applied: %d curated, %d families derived", curated, derived)
 
-        # Nicknames (many references may share one nickname)
+        # Nicknames (many references may share one nickname).
+        # Ref-level nicknames stay on the parent; dial-variant children get
+        # theirs from REF_VARIANTS below.
         nickname_count = 0
         for w in all_watches:
+            if w.dial_variant:
+                continue
             brand_slug = slug_by_brand_id.get(w.brand_id)
             meta = metadata.get((brand_slug, w.reference_number))
             if not meta or not meta.nicknames:
@@ -623,6 +627,81 @@ def run_seed() -> None:
                     session.add(WatchNickname(watch_id=w.id, nickname=nick))
                     nickname_count += 1
         logger.info("Nicknames added: %d", nickname_count)
+
+        # Dial variants: each dial of a multi-dial reference is its own watch
+        variant_count = 0
+        for (brand_slug, ref), variants in REF_VARIANTS.items():
+            brand_id = brand_map.get(brand_slug)
+            if brand_id is None:
+                continue
+            parent = session.execute(
+                select(Watch).where(
+                    Watch.brand_id == brand_id,
+                    Watch.reference_number == ref,
+                    Watch.dial_variant.is_(None),
+                )
+            ).scalar_one_or_none()
+            if parent is None:
+                logger.warning("Variant parent missing: %s %s", brand_slug, ref)
+                continue
+
+            for variant in variants:
+                child = session.execute(
+                    select(Watch).where(
+                        Watch.brand_id == brand_id,
+                        Watch.reference_number == ref,
+                        Watch.dial_variant == variant.dial,
+                    )
+                ).scalar_one_or_none()
+                if child is None:
+                    child = Watch(
+                        brand_id=brand_id,
+                        reference_number=ref,
+                        dial_variant=variant.dial,
+                        model_name=parent.model_name,
+                        family=parent.family,
+                        case_size_mm=parent.case_size_mm,
+                        case_material=parent.case_material,
+                        dial_color=variant.dial,
+                        bezel=parent.bezel,
+                        bracelet=parent.bracelet,
+                        has_date=parent.has_date,
+                        movement=parent.movement,
+                        production_start_year=parent.production_start_year,
+                        production_end_year=parent.production_end_year,
+                        retail_price_usd=parent.retail_price_usd,
+                    )
+                    session.add(child)
+                    session.flush()
+                    variant_count += 1
+
+                # Variant nicknames belong to the child, never the parent
+                for nick in variant.nicknames:
+                    session.execute(
+                        WatchNickname.__table__.delete().where(
+                            WatchNickname.watch_id == parent.id,
+                            WatchNickname.nickname == nick,
+                        )
+                    )
+                    existing = session.execute(
+                        select(WatchNickname).where(
+                            WatchNickname.watch_id == child.id,
+                            WatchNickname.nickname == nick,
+                        )
+                    ).scalar_one_or_none()
+                    if not existing:
+                        session.add(WatchNickname(watch_id=child.id, nickname=nick))
+
+                # Variant aliases (Patek dash suffixes) re-point to the child
+                for alias_str in variant.aliases:
+                    row = session.execute(
+                        select(WatchAlias).where(WatchAlias.alias == alias_str)
+                    ).scalar_one_or_none()
+                    if row is None:
+                        session.add(WatchAlias(watch_id=child.id, alias=alias_str))
+                    elif row.watch_id != child.id:
+                        row.watch_id = child.id
+        logger.info("Dial variants created: %d", variant_count)
 
         # Aliases
         for canonical_ref, alias_list in ALIASES.items():

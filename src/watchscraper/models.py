@@ -40,13 +40,14 @@ class Watch(Base):
     """
 
     __tablename__ = "watches"
-    __table_args__ = (
-        UniqueConstraint("brand_id", "reference_number", name="uq_watch_brand_ref"),
-    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     brand_id: Mapped[int] = mapped_column(ForeignKey("brands.id"), nullable=False)
     reference_number: Mapped[str] = mapped_column(String(50), nullable=False)
+    # NULL = the reference-level watch (single-dial ref, or the mixed parent
+    # bucket of a multi-dial ref). Set = a specific dial variant, which is
+    # its own watch with its own value ("116508" vs "116508 Green").
+    dial_variant: Mapped[str | None] = mapped_column(String(50))
     model_name: Mapped[str] = mapped_column(String(200), nullable=False)
     family: Mapped[str | None] = mapped_column(String(100), index=True)
     case_size_mm: Mapped[float | None] = mapped_column(Float)
@@ -183,6 +184,7 @@ class PortfolioHolding(Base):
     brand: Mapped[str] = mapped_column(String(100), nullable=False)
     family: Mapped[str] = mapped_column(String(100), nullable=False)
     reference_number: Mapped[str | None] = mapped_column(String(50))
+    dial_variant: Mapped[str | None] = mapped_column(String(50))
     purchase_price_usd: Mapped[float | None] = mapped_column(Float)
     purchase_date: Mapped[date | None] = mapped_column(Date)
     condition: Mapped[str | None] = mapped_column(String(20))

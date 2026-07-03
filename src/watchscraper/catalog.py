@@ -31,6 +31,22 @@ class RefMeta:
     has_date: bool | None = None
 
 
+@dataclass(frozen=True)
+class DialVariant:
+    """A dial variant of a reference — its own watch with its own value.
+
+    match_terms are additional dial words in listings that mean this dial
+    ("gold dial" on a yellow-gold Daytona means champagne). aliases are
+    full reference strings that pin the variant exactly (Patek encodes the
+    dial in the dash suffix: 5711/1A-014 IS the green dial).
+    """
+
+    dial: str
+    nicknames: tuple[str, ...] = ()
+    match_terms: tuple[str, ...] = ()
+    aliases: tuple[str, ...] = ()
+
+
 # Keyed by (brand_slug, reference_number)
 REF_METADATA: dict[tuple[str, str], RefMeta] = {
     # ══ ROLEX — Submariner ══
@@ -53,15 +69,15 @@ REF_METADATA: dict[tuple[str, str], RefMeta] = {
     ("rolex", "114060"): RefMeta("Submariner", 2012, 2020, (), "Black", "Oyster", False),
 
     # ══ ROLEX — Daytona ══
-    ("rolex", "116500LN"): RefMeta("Daytona", 2016, 2023, ("Panda",), "Black", "Oyster", False),
-    ("rolex", "126500LN"): RefMeta("Daytona", 2023, None, ("Panda",), "Black", "Oyster", False),
+    ("rolex", "116500LN"): RefMeta("Daytona", 2016, 2023, (), "Black", "Oyster", False),
+    ("rolex", "126500LN"): RefMeta("Daytona", 2023, None, (), "Black", "Oyster", False),
     ("rolex", "116520"): RefMeta("Daytona", 2000, 2016, (), "Steel", "Oyster", False),
     ("rolex", "16520"): RefMeta("Daytona", 1988, 2000, ("Zenith Daytona",), "Steel", "Oyster", False),
     ("rolex", "116523"): RefMeta("Daytona", 2000, 2016, (), None, "Oyster", False),
     ("rolex", "16523"): RefMeta("Daytona", 1988, 2000, ("Zenith Daytona",), None, "Oyster", False),
     ("rolex", "116503"): RefMeta("Daytona", 2016, 2023, (), None, "Oyster", False),
     ("rolex", "126503"): RefMeta("Daytona", 2023, None, (), None, "Oyster", False),
-    ("rolex", "116508"): RefMeta("Daytona", 2016, 2023, ("John Mayer",), None, "Oyster", False),
+    ("rolex", "116508"): RefMeta("Daytona", 2016, 2023, (), None, "Oyster", False),
     ("rolex", "116509"): RefMeta("Daytona", 2004, 2023, (), None, "Oyster", False),
     ("rolex", "116505"): RefMeta("Daytona", 2008, 2023, (), None, "Oyster", False),
     ("rolex", "116515LN"): RefMeta("Daytona", 2011, 2023, (), "Black", "Oysterflex", False),
@@ -219,6 +235,102 @@ ADDITIONAL_METADATA: dict[tuple[str, str], RefMeta] = {
     ("rolex", "16610LV"): RefMeta("Submariner", 2003, 2010, ("Kermit",), "Green", "Oyster", True),
     ("rolex", "116619LB"): RefMeta("Submariner", 2008, 2020, ("Smurf",), "Blue", "Oyster", True),
     ("omega", "311.30.42.30.01.005"): RefMeta("Speedmaster", 2014, 2021, (), None, "Bracelet", False),
+}
+
+
+# ── Dial variants ─────────────────────────────────────────────────────────
+# Only for references where the short ref hides dial variety AND the dial
+# moves the price materially. Omega, Cartier, IWC, JLC, and VC encode the
+# dial in the full reference already, so they need no variant children.
+REF_VARIANTS: dict[tuple[str, str], tuple[DialVariant, ...]] = {
+    # Yellow-gold Daytona: the green dial ("John Mayer") trades ~60% above
+    # champagne — averaging them is meaningless.
+    ("rolex", "116508"): (
+        DialVariant("Green", nicknames=("John Mayer",)),
+        DialVariant("Champagne", match_terms=("gold",)),
+        DialVariant("Black"),
+        DialVariant("White"),
+        DialVariant("MOP", match_terms=("mother of pearl",)),
+    ),
+    ("rolex", "116509"): (
+        DialVariant("Silver"),
+        DialVariant("Blue"),
+        DialVariant("Black"),
+        DialVariant("Meteorite"),
+    ),
+    ("rolex", "116505"): (
+        DialVariant("Pink", match_terms=("rose",)),
+        DialVariant("Chocolate", match_terms=("brown",)),
+        DialVariant("Black"),
+    ),
+    ("rolex", "116515LN"): (
+        DialVariant("Pink", match_terms=("rose",)),
+        DialVariant("Chocolate", match_terms=("brown",)),
+        DialVariant("Black"),
+        DialVariant("Ivory"),
+    ),
+    ("rolex", "126515LN"): (
+        DialVariant("Sundust", match_terms=("pink", "rose")),
+        DialVariant("Chocolate", match_terms=("brown",)),
+        DialVariant("Black"),
+    ),
+    ("rolex", "126518LN"): (
+        DialVariant("Golden", match_terms=("gold", "champagne")),
+        DialVariant("Green"),
+        DialVariant("Black"),
+    ),
+    ("rolex", "126519LN"): (
+        DialVariant("Grey", match_terms=("steel", "slate")),
+        DialVariant("Black"),
+    ),
+    # Steel Daytona: white ("Panda") carries a persistent premium over black
+    ("rolex", "116500LN"): (
+        DialVariant("White", nicknames=("Panda",)),
+        DialVariant("Black"),
+    ),
+    ("rolex", "126500LN"): (
+        DialVariant("White", nicknames=("Panda",)),
+        DialVariant("Black"),
+    ),
+    ("rolex", "116520"): (
+        DialVariant("White"),
+        DialVariant("Black"),
+    ),
+    ("rolex", "16520"): (
+        DialVariant("White"),
+        DialVariant("Black"),
+    ),
+    ("rolex", "116523"): (
+        DialVariant("White"),
+        DialVariant("Champagne", match_terms=("gold",)),
+        DialVariant("Black"),
+        DialVariant("Blue"),
+    ),
+    ("rolex", "116503"): (
+        DialVariant("White"),
+        DialVariant("Champagne", match_terms=("gold",)),
+        DialVariant("Black"),
+    ),
+    ("rolex", "126503"): (
+        DialVariant("White"),
+        DialVariant("Champagne", match_terms=("gold",)),
+        DialVariant("Black"),
+    ),
+    # Patek encodes the dial in the dash suffix — the alias pins it exactly
+    ("patek-philippe", "5711/1A"): (
+        DialVariant("Blue", aliases=("5711/1A-010",)),
+        DialVariant("Green", aliases=("5711/1A-014",)),
+    ),
+    ("audemars-piguet", "15500ST"): (
+        DialVariant("Blue"),
+        DialVariant("Black"),
+        DialVariant("Silver", match_terms=("white", "grey")),
+    ),
+    ("audemars-piguet", "15400ST"): (
+        DialVariant("Blue"),
+        DialVariant("Black"),
+        DialVariant("Silver", match_terms=("white", "grey")),
+    ),
 }
 
 

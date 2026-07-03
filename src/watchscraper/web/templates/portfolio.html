@@ -108,10 +108,12 @@ function populateRefs() {
   famRefs.sort((a, b) => (b.n_sold ?? 0) - (a.n_sold ?? 0));
   for (const r of famRefs) {
     const o = document.createElement("option");
-    o.value = r.ref;
+    o.value = r.slug;
+    o.dataset.ref = r.ref;
+    o.dataset.dial = r.dial_variant || "";
     const nick = r.nicknames.length ? " “" + r.nicknames[0] + "”" : "";
     const years = r.years ? " (" + r.years + ")" : "";
-    o.textContent = r.ref + nick + years + " — " + fmtUSD(r.median_usd, true);
+    o.textContent = (r.display_ref || r.ref) + nick + years + " — " + fmtUSD(r.median_usd, true);
     refSel.appendChild(o);
   }
 }
@@ -186,7 +188,8 @@ async function load() {
     }
 
     const tdRef = document.createElement("td");
-    tdRef.textContent = h.reference_number || "—";
+    tdRef.textContent = (h.reference_number || "—") +
+      (h.dial_variant ? " · " + h.dial_variant : "");
     if (h.priced_at) {
       const tag = document.createElement("div");
       tag.style.cssText = "font-size:10px;color:" +
@@ -236,10 +239,12 @@ async function load() {
 document.getElementById("add-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const opt = familySel.selectedOptions[0];
+  const refOpt = refSel.selectedOptions[0];
   const body = {
     brand: opt.dataset.brand,
     family: familySel.value,
-    reference_number: refSel.value || null,
+    reference_number: (refOpt && refOpt.dataset.ref) || null,
+    dial_variant: (refOpt && refOpt.dataset.dial) || null,
     nickname: document.getElementById("a-nickname").value || null,
     purchase_price_usd: parseFloat(document.getElementById("a-price").value) || null,
     purchase_date: document.getElementById("a-date").value || null,

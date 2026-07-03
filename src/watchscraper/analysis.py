@@ -80,6 +80,12 @@ JUNK_PATTERNS: list[str] = [
     r"\bbezel\s+insert\b",
     r"\b(?:parts|repair|not\s+working|as[- ]?is|broken|no\s+movement)\b",
     r"\bswatch\b",  # Omega/AP x Swatch collabs are a different market
+    # Aftermarket modifications destroy collector value and poison variant
+    # prices ("Custom Green Dial" 116508s are NOT John Mayers)
+    r"\b(?:custom|aftermarket|refinished)\s+(?:\w+\s+){0,2}(?:dial|bezel|diamonds?)\b",
+    r"\bredial\b",
+    r"\biced[\s-]?out\b",
+    r"\bdiamond\s+(?:set|encrusted|added)\b",
     r"\b(?:empty|display)\s+box\b",
     r"\bwarranty\s+card\b",
     r"\bservice\s+(?:papers?|booklet|manual)\b",
@@ -119,10 +125,17 @@ DATASET_SQL = text("""
         b.name AS linked_brand,
         w.model_name AS linked_model,
         w.reference_number AS linked_ref,
+        w.dial_variant AS linked_dial,
         w.family AS linked_family,
         w.production_start_year,
         w.production_end_year,
-        w.retail_price_usd / 100.0 AS retail_price
+        w.retail_price_usd / 100.0 AS retail_price,
+        EXISTS (
+            SELECT 1 FROM watches w2
+            WHERE w2.brand_id = w.brand_id
+              AND w2.reference_number = w.reference_number
+              AND w2.dial_variant IS NOT NULL
+        ) AS ref_has_variants
     FROM price_records pr
     JOIN sources s ON s.id = pr.source_id
     LEFT JOIN watches w ON w.id = pr.watch_id
@@ -343,11 +356,12 @@ REF_VALUE_MIN_CONFIDENCE = 0.65
 
 
 def reference_values(df: pd.DataFrame, min_n: int = 3) -> pd.DataFrame:
-    """Market value per reference (the variant is the reference).
+    """Market value per watch: the (reference, dial variant) pair.
 
     Only clean sold records matched at REF_VALUE_MIN_CONFIDENCE or better
-    contribute: a nickname-default-generation guess (0.55) is good enough to
-    place a listing in a family, not to price a specific variant.
+    contribute. For multi-dial references, records parked on the parent
+    bucket (dial unresolved) are EXCLUDED — a mixed bag of $40k champagne
+    and $70k green dials prices nothing.
     """
     clean = df[
         df["clean"]
@@ -355,11 +369,19 @@ def reference_values(df: pd.DataFrame, min_n: int = 3) -> pd.DataFrame:
         & df["linked_ref"].notna()
         & (df["match_confidence"].fillna(0) >= REF_VALUE_MIN_CONFIDENCE)
     ]
+    # Drop parent-bucket records of refs that have dial variants
+    if "ref_has_variants" in clean.columns:
+        clean = clean[
+            ~(clean["ref_has_variants"].fillna(False) & clean["linked_dial"].isna())
+        ]
     if clean.empty:
         return pd.DataFrame()
 
     rows = []
-    for (brand, ref), grp in clean.groupby(["linked_brand", "linked_ref"]):
+    grouped = clean.groupby(
+        ["linked_brand", "linked_ref", clean["linked_dial"].fillna("")]
+    )
+    for (brand, ref, dial), grp in grouped:
         if len(grp) < min_n:
             continue
         prices = grp["price"].values
@@ -370,6 +392,7 @@ def reference_values(df: pd.DataFrame, min_n: int = 3) -> pd.DataFrame:
             {
                 "brand": brand,
                 "ref": ref,
+                "dial_variant": dial or None,
                 "model": grp["linked_model"].iloc[0],
                 "family": grp["family"].iloc[0],
                 "start_year": grp["production_start_year"].iloc[0],

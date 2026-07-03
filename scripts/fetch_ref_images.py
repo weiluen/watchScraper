@@ -63,13 +63,14 @@ def find_image_url(html: str, ref: str) -> str | None:
     return None
 
 
-def fetch_ref_image(brand: str, ref: str) -> bool:
-    slug = ref_slug(brand, ref)
+def fetch_ref_image(brand: str, ref: str, dial: str | None = None) -> bool:
+    slug = ref_slug(brand, ref, dial)
     out_path = OUT_DIR / f"{slug}.jpg"
     if out_path.exists():
         return True
 
-    url = SEARCH_URL.format(query=quote_plus(f"{brand} {ref}"))
+    query = f"{brand} {ref} {dial} dial" if dial else f"{brand} {ref}"
+    url = SEARCH_URL.format(query=quote_plus(query))
     try:
         resp = cffi.get(url, impersonate="chrome", timeout=30)
     except Exception:
@@ -104,9 +105,13 @@ def main() -> None:
     refs = reference_values(df)
     logger.info("Fetching images for %d priced references", len(refs))
 
+    import pandas as pd
+
     got, missed = 0, 0
     for _, r in refs.iterrows():
-        if fetch_ref_image(r["brand"], r["ref"]):
+        dial = r.get("dial_variant")
+        dial = dial if (dial and pd.notna(dial)) else None
+        if fetch_ref_image(r["brand"], r["ref"], dial):
             got += 1
         else:
             missed += 1

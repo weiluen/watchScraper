@@ -4,7 +4,7 @@
   <p class="subtitle" style="margin-bottom:0"><a href="/watches" id="back-link">← All watches</a></p>
   <div class="family-hero">
     <div style="flex:1">
-      <h1>{{ brand }} <span style="color:var(--accent-gold)">{{ ref }}</span></h1>
+      <h1>{{ brand }} <span style="color:var(--accent-gold)">{{ ref }}</span>{% if dial %} <span style="font-weight:500;color:var(--ink-2)">· {{ dial }} dial</span>{% endif %}</h1>
       <p class="subtitle" id="ref-sub"></p>
       <div id="ref-nicknames"></div>
     </div>
@@ -158,12 +158,12 @@ for (const s of d.siblings) {
     img.className = "holding-photo";
     img.style.cssText = "float:left;margin-right:10px";
     img.src = s.image;
-    img.alt = s.ref;
+    img.alt = s.display_ref;
     img.loading = "lazy";
     td1.appendChild(img);
   }
   const strong = document.createElement("strong");
-  strong.textContent = s.ref;
+  strong.textContent = s.display_ref || s.ref;
   td1.appendChild(strong);
   const subParts = [];
   if (s.nicknames.length) subParts.push("“" + s.nicknames.join("”, “") + "”");
