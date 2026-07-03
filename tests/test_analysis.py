@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from watchscraper.analysis import (
+    assign_material,
     assign_tiers,
     categorize,
     flag_junk,
@@ -150,6 +151,7 @@ class TestOutlierFilter:
 class TestTiersAndWeekly:
     def _clean_df(self, rows):
         df = categorize(make_df(rows))
+        df = assign_material(df)
         df = flag_junk(df)
         df = flag_suspect(df)
         df = flag_outliers(df)

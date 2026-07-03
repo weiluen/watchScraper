@@ -19,6 +19,9 @@ from sqlalchemy import text as sa_text
 from watchscraper.analysis import (
     build_clean_dataset,
     cleaning_report,
+    dominant_material,
+    dominant_weekly,
+    material_breakdown,
     reference_values,
     weekly_medians,
 )
@@ -69,12 +72,15 @@ def ref_image(
 @dataclass
 class MarketSnapshot:
     df: pd.DataFrame
-    weekly: pd.DataFrame
+    weekly: pd.DataFrame  # material-stratified
+    dom_weekly: pd.DataFrame  # each family's dominant material stratum only
     signals: pd.DataFrame
     index: pd.Series
     index_forecast: pd.DataFrame | None
     forecasts: dict[str, pd.DataFrame]
     report: dict
+    dominant: dict[str, str] = field(default_factory=dict)
+    breakdown: pd.DataFrame = field(default_factory=pd.DataFrame)
     ref_values: pd.DataFrame = field(default_factory=pd.DataFrame)
     nicknames_by_ref: dict[tuple[str, str], list[str]] = field(default_factory=dict)
     computed_at: float = field(default_factory=time.time)
@@ -113,10 +119,12 @@ def get_market(refresh: bool = False) -> MarketSnapshot:
         ):
             df = build_clean_dataset(engine)
             weekly = weekly_medians(df)
-            signals = family_signals(df, weekly)
+            dominant = dominant_material(df)
+            dom_weekly = dominant_weekly(weekly, dominant)
+            signals = family_signals(df, dom_weekly, dominant)
             index = build_market_index(weekly)
             index_fc = forecast_series(index) if not index.empty else None
-            forecasts = forecast_families(weekly)
+            forecasts = forecast_families(dom_weekly)
             nick_rows = pd.read_sql(
                 sa_text("""
                     SELECT w.reference_number AS ref,
@@ -134,11 +142,14 @@ def get_market(refresh: bool = False) -> MarketSnapshot:
             _snapshot = MarketSnapshot(
                 df=df,
                 weekly=weekly,
+                dom_weekly=dom_weekly,
                 signals=signals,
                 index=index,
                 index_forecast=index_fc,
                 forecasts=forecasts,
                 report=cleaning_report(df),
+                dominant=dominant,
+                breakdown=material_breakdown(df),
                 ref_values=reference_values(df),
                 nicknames_by_ref=nicknames_by_ref,
             )
@@ -167,9 +178,10 @@ def series_points(s: pd.Series) -> list[dict]:
 def family_weekly_series(
     snapshot: MarketSnapshot, family: str, price_type: str = "sold"
 ) -> pd.DataFrame:
-    grp = snapshot.weekly[
-        (snapshot.weekly["family"] == family)
-        & (snapshot.weekly["price_type"] == price_type)
+    """The family's composition-stable series: its dominant material stratum."""
+    grp = snapshot.dom_weekly[
+        (snapshot.dom_weekly["family"] == family)
+        & (snapshot.dom_weekly["price_type"] == price_type)
     ]
     return grp.sort_values("week")
 
@@ -289,11 +301,28 @@ def family_detail_payload(snapshot: MarketSnapshot, slug: str) -> dict | None:
                 }
             )
 
+    materials = []
+    if not snapshot.breakdown.empty:
+        fam_break = snapshot.breakdown[
+            snapshot.breakdown["family"] == family
+        ].sort_values("n", ascending=False)
+        materials = [
+            {
+                "material": r["material"],
+                "n": int(r["n"]),
+                "median": _clean_float(r["median"]),
+                "dominant": snapshot.dominant.get(family) == r["material"],
+            }
+            for _, r in fam_break.iterrows()
+        ]
+
     return {
         "brand": row["brand"],
         "family": family,
         "slug": slug,
         "image": family_image(slug),
+        "materials": materials,
+        "dominant_material": snapshot.dominant.get(family),
         "tier": row["tier"],
         "signals": signals_payload_row(row),
         "history": history,

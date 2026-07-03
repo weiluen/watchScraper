@@ -493,7 +493,12 @@ def forecast(horizon: int, output_dir: str) -> None:
 
     import pandas as pd
 
-    from watchscraper.analysis import build_clean_dataset, weekly_medians
+    from watchscraper.analysis import (
+        build_clean_dataset,
+        dominant_material,
+        dominant_weekly,
+        weekly_medians,
+    )
     from watchscraper.database import engine
     from watchscraper.macro import load_weekly as load_macro_weekly
     from watchscraper.quant import (
@@ -506,7 +511,9 @@ def forecast(horizon: int, output_dir: str) -> None:
 
     df = build_clean_dataset(engine)
     weekly = weekly_medians(df)
-    signals = family_signals(df, weekly)
+    dominant = dominant_material(df)
+    dom_weekly = dominant_weekly(weekly, dominant)
+    signals = family_signals(df, dom_weekly, dominant)
     index = build_market_index(weekly)
 
     outpath = Path(output_dir)
@@ -551,7 +558,7 @@ def forecast(horizon: int, output_dir: str) -> None:
             idx_fc.to_csv(outpath / "index_forecast.csv", index=False)
 
     # ── Family forecasts ──
-    fcs = forecast_families(weekly, horizon_weeks=horizon)
+    fcs = forecast_families(dom_weekly, horizon_weeks=horizon)
     if fcs:
         click.echo(f"\n{'=' * 100}")
         click.echo(f"FAMILY PRICE FORECASTS ({horizon}-week horizon, shrunk Theil-Sen + bootstrap)")
@@ -559,8 +566,8 @@ def forecast(horizon: int, output_dir: str) -> None:
         rows = []
         for family, fc in sorted(fcs.items()):
             last = fc.iloc[-1]
-            spot = weekly[
-                (weekly["family"] == family) & (weekly["price_type"] == "sold")
+            spot = dom_weekly[
+                (dom_weekly["family"] == family) & (dom_weekly["price_type"] == "sold")
             ].sort_values("week")["median"].iloc[-1]
             chg = (last["forecast"] / spot - 1) * 100
             click.echo(

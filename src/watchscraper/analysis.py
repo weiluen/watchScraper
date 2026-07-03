@@ -119,6 +119,8 @@ DATASET_SQL = text("""
         pr.match_method,
         pr.match_confidence,
         pr.parsed_year,
+        pr.parsed_attributes->>'material' AS parsed_material,
+        w.case_material AS linked_material,
         pr.observed_at,
         pr.scraped_at,
         pr.raw_data->>'query' AS query,
@@ -210,6 +212,55 @@ def flag_junk(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+# Material buckets: coarse strata that carry the big price differences.
+# "Unstated" folds into steel — sellers advertise gold and two-tone
+# prominently; absence of a material claim overwhelmingly means the base
+# steel model (verified: unstated family-level medians track steel within a
+# few percent).
+_MATERIAL_BUCKETS: list[tuple[str, str]] = [
+    ("two-tone", r"two[\s-]?tone|rolesor|steel\s*(?:&|/|and)\s*(?:sedna\s+|yellow\s+|rose\s+|everose\s+)?gold|/steel|steel/"),
+    ("precious", r"\bgold\b|platinum|everose|sedna|canopus"),
+    ("other", r"titanium|ceramic|bronze|glass|brass"),
+    ("steel", r"steel|oystersteel"),
+]
+
+_PARSED_TO_BUCKET = {
+    "two-tone": "two-tone",
+    "yellow-gold": "precious",
+    "rose-gold": "precious",
+    "white-gold": "precious",
+    "platinum": "precious",
+    "titanium": "other",
+    "ceramic": "other",
+    "steel": "steel",
+}
+
+
+def _bucket_from_raw(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    for bucket, pattern in _MATERIAL_BUCKETS:
+        if re.search(pattern, raw, re.IGNORECASE):
+            return bucket
+    return None
+
+
+def assign_material(df: pd.DataFrame) -> pd.DataFrame:
+    """Material bucket per record: linked watch material (authoritative)
+    first, then the material parsed from the title, else steel."""
+    linked = df.get("linked_material", pd.Series(None, index=df.index))
+    parsed = df.get("parsed_material", pd.Series(None, index=df.index))
+    buckets: list[str] = []
+    for lm, pm in zip(linked, parsed):
+        bucket = _bucket_from_raw(lm if isinstance(lm, str) else None)
+        if bucket is None and isinstance(pm, str):
+            bucket = _PARSED_TO_BUCKET.get(pm)
+        buckets.append(bucket or "steel")
+    out = df.copy()
+    out["material"] = buckets
+    return out
+
+
 def flag_outliers(df: pd.DataFrame) -> pd.DataFrame:
     """Two-stage family-relative outlier flagging on non-junk records.
 
@@ -253,26 +304,30 @@ ANCHOR_FLOOR = 0.35
 def flag_suspect(df: pd.DataFrame) -> pd.DataFrame:
     """Flag sold records implausibly far below independent price anchors.
 
-    Anchor priority: Chrono24 dealer asking median for the family (dealers
-    rarely list fakes), falling back to the family's median retail price from
-    the seeded reference watches.
+    Anchors are material-aware: a gold watch checked against a steel-heavy
+    family anchor would sail through; against the gold stratum's anchor it
+    stands out. Anchor priority: Chrono24 dealer asking median for the
+    (family, material) stratum, then the family, then median retail.
     """
     out = df.copy()
+    if "material" not in out.columns:
+        out = assign_material(out)
     usable = ~out["is_junk"] & out["family"].notna()
 
-    ask_anchor = (
-        out[usable & (out["price_type"] == "asking")]
-        .groupby("family")["price"]
-        .median()
-    )
+    asking = out[usable & (out["price_type"] == "asking")]
+    strat_anchor = asking.groupby(["family", "material"])["price"].median()
+    fam_anchor = asking.groupby("family")["price"].median()
     retail_anchor = (
         out[out["family"].notna() & out["retail_price"].notna()]
         .groupby("family")["retail_price"]
         .median()
     )
-    anchor = ask_anchor.combine_first(retail_anchor)
 
-    out["anchor_price"] = out["family"].map(anchor)
+    keys = pd.MultiIndex.from_arrays([out["family"], out["material"]])
+    anchor = pd.Series(keys.map(strat_anchor), index=out.index)
+    anchor = anchor.fillna(out["family"].map(fam_anchor.combine_first(retail_anchor)))
+
+    out["anchor_price"] = anchor
     out["is_suspect"] = (
         usable
         & (out["price_type"] == "sold")
@@ -314,6 +369,7 @@ def build_clean_dataset(engine) -> pd.DataFrame:
     """
     df = load_dataset(engine)
     df = categorize(df)
+    df = assign_material(df)
     df = flag_junk(df)
     df = flag_suspect(df)
     df = flag_outliers(df)
@@ -324,11 +380,12 @@ def build_clean_dataset(engine) -> pd.DataFrame:
     return df
 
 
-def weekly_medians(df: pd.DataFrame, min_n: int = 5) -> pd.DataFrame:
-    """Weekly median price per (brand, family, price_type).
+def weekly_medians(df: pd.DataFrame, min_n: int = 4) -> pd.DataFrame:
+    """Weekly median price per (brand, family, material, price_type).
 
-    Buckets with fewer than min_n observations are dropped — a median of
-    three sales is noise, not signal.
+    Material stratification stops composition drift: a two-tone-heavy week
+    is a mix shift, not a price move. Buckets with fewer than min_n
+    observations are dropped — a median of two sales is noise.
     """
     clean = df[df["clean"]].copy()
     clean["week"] = (
@@ -336,7 +393,7 @@ def weekly_medians(df: pd.DataFrame, min_n: int = 5) -> pd.DataFrame:
         .dt.to_period("W-SUN").dt.start_time
     )
     agg = (
-        clean.groupby(["brand", "family", "price_type", "week"])
+        clean.groupby(["brand", "family", "material", "price_type", "week"])
         .agg(
             n=("price", "size"),
             median=("price", "median"),
@@ -348,6 +405,42 @@ def weekly_medians(df: pd.DataFrame, min_n: int = 5) -> pd.DataFrame:
         .reset_index()
     )
     return agg[agg["n"] >= min_n].reset_index(drop=True)
+
+
+def dominant_material(df: pd.DataFrame) -> dict[str, str]:
+    """Each family's highest-volume material bucket (clean sold records)."""
+    clean = df[df["clean"] & (df["price_type"] == "sold") & df["family"].notna()]
+    if clean.empty:
+        return {}
+    counts = clean.groupby(["family", "material"]).size()
+    return {
+        family: counts[family].idxmax() for family in counts.index.get_level_values(0).unique()
+    }
+
+
+def dominant_weekly(weekly: pd.DataFrame, dominant: dict[str, str]) -> pd.DataFrame:
+    """Weekly medians restricted to each family's dominant material stratum.
+
+    This is the composition-stable series for trends, forecasts, sparklines,
+    and portfolio marks."""
+    if weekly.empty:
+        return weekly
+    mask = weekly.apply(
+        lambda r: dominant.get(r["family"]) == r["material"], axis=1
+    )
+    return weekly[mask].reset_index(drop=True)
+
+
+def material_breakdown(df: pd.DataFrame) -> pd.DataFrame:
+    """Clean sold median + count per (family, material) for display."""
+    clean = df[df["clean"] & (df["price_type"] == "sold") & df["family"].notna()]
+    if clean.empty:
+        return pd.DataFrame()
+    return (
+        clean.groupby(["family", "material"])
+        .agg(n=("price", "size"), median=("price", "median"))
+        .reset_index()
+    )
 
 
 # Records below this match confidence don't price a specific reference —
@@ -419,6 +512,7 @@ def store_snapshots(engine, weekly: pd.DataFrame) -> int:
             "snapshot_date": r["week"].date(),
             "brand": r["brand"],
             "family": r["family"],
+            "material": r.get("material", "all"),
             "price_type": r["price_type"],
             "n": int(r["n"]),
             "median_usd": float(r["median"]),
@@ -435,12 +529,12 @@ def store_snapshots(engine, weekly: pd.DataFrame) -> int:
         conn.execute(
             sa_text("""
                 INSERT INTO price_snapshots
-                    (snapshot_date, brand, family, price_type, n,
+                    (snapshot_date, brand, family, material, price_type, n,
                      median_usd, p25_usd, p75_usd, mean_usd, std_usd)
                 VALUES
-                    (:snapshot_date, :brand, :family, :price_type, :n,
+                    (:snapshot_date, :brand, :family, :material, :price_type, :n,
                      :median_usd, :p25_usd, :p75_usd, :mean_usd, :std_usd)
-                ON CONFLICT ON CONSTRAINT uq_snapshot_week_family_type
+                ON CONFLICT ON CONSTRAINT uq_snapshot_week_family_material_type
                 DO UPDATE SET
                     n = EXCLUDED.n,
                     median_usd = EXCLUDED.median_usd,

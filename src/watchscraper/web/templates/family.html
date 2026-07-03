@@ -36,9 +36,17 @@
   <div class="card">
     <div class="card-head">
       <h2>Price history &amp; 8-week outlook</h2>
-      <span class="hint">Weekly medians · shaded regions: sold interquartile range, 90% forecast band</span>
+      <span class="hint" id="chart-hint">Weekly medians · shaded regions: sold interquartile range, 90% forecast band</span>
     </div>
     <div id="price-chart"></div>
+  </div>
+
+  <div class="card" id="materials-card" style="display:none">
+    <div class="card-head">
+      <h2>By case material</h2>
+      <span class="hint">material moves price like the model — the trend above is measured within the dominant stratum</span>
+    </div>
+    <div class="row cols-4" id="materials-row"></div>
   </div>
 
   <div class="row split-main">
@@ -125,6 +133,38 @@ if (d.forecast.length && d.history.length) {
              ...d.forecast.map((p) => ({ date: p.date, lower: p.p05, upper: p.p95 }))] });
 }
 lineChart(document.getElementById("price-chart"), { series, bands, height: 320, yPrefix: "$" });
+
+if (d.dominant_material) {
+  document.getElementById("chart-hint").textContent =
+    "Weekly medians within the " + d.dominant_material +
+    " stratum · shaded: sold IQR, 90% forecast band";
+}
+
+const MATERIAL_LABELS = {
+  steel: "Steel", "two-tone": "Two-tone", precious: "Precious metal", other: "Ti / ceramic",
+};
+if (d.materials && d.materials.length > 1) {
+  document.getElementById("materials-card").style.display = "";
+  const row = document.getElementById("materials-row");
+  for (const m of d.materials) {
+    const tile = document.createElement("div");
+    tile.className = "card stat-tile";
+    tile.style.background = "var(--plane)";
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = (MATERIAL_LABELS[m.material] || m.material) +
+      (m.dominant ? " · dominant" : "");
+    const value = document.createElement("div");
+    value.className = "value";
+    value.style.fontSize = "22px";
+    value.textContent = fmtUSD(m.median);
+    const ctx = document.createElement("div");
+    ctx.className = "context";
+    ctx.textContent = m.n + " clean sales";
+    tile.append(label, value, ctx);
+    row.appendChild(tile);
+  }
+}
 
 const salesBody = document.getElementById("sales-body");
 for (const sale of d.recent_sales) {

@@ -24,14 +24,19 @@ TRADING_WEEKS = 52
 
 
 def build_market_index(weekly: pd.DataFrame, price_type: str = "sold") -> pd.Series:
-    """Equal-weight watch-market index from family weekly medians, rebased 100.
+    """Equal-weight watch-market index from weekly medians, rebased 100.
 
-    Chains the median cross-family weekly log-return: robust to families
-    appearing/disappearing and to any single family's bad week.
+    Chains the median cross-stratum weekly log-return. Strata are
+    (family, material) when material is present — a return computed within
+    a material bucket cannot be composition drift — and the chaining is
+    robust to strata appearing/disappearing week to week.
     """
+    columns = (
+        ["family", "material"] if "material" in weekly.columns else "family"
+    )
     panel = (
         weekly[weekly["price_type"] == price_type]
-        .pivot_table(index="week", columns="family", values="median")
+        .pivot_table(index="week", columns=columns, values="median")
         .sort_index()
     )
     if panel.empty or len(panel) < 2:
@@ -100,8 +105,17 @@ def bootstrap_median_ci(
 # ── Family-level signal table ─────────────────────────────────────────────
 
 
-def family_signals(df: pd.DataFrame, weekly: pd.DataFrame) -> pd.DataFrame:
+def family_signals(
+    df: pd.DataFrame,
+    weekly: pd.DataFrame,
+    dominant: dict[str, str] | None = None,
+) -> pd.DataFrame:
     """Per-family quant signal table from clean records + weekly medians.
+
+    Pass the dominant-material weekly frame so trend/volatility/momentum are
+    measured within one material stratum (composition-stable); the headline
+    median remains the whole family's. `dominant` annotates which stratum
+    carried the time-series statistics.
 
     Columns: liquidity, level (median + bootstrap CI), volatility, momentum,
     robust trend, trend significance, ask/sold spread, premium to retail.
@@ -173,6 +187,7 @@ def family_signals(df: pd.DataFrame, weekly: pd.DataFrame) -> pd.DataFrame:
                 "ask_sold_spread_pct": spread,
                 "premium_to_retail_pct": premium,
                 "n_weeks": len(fam_weekly),
+                "dominant_material": (dominant or {}).get(family),
             }
         )
     return pd.DataFrame(rows).sort_values("median_usd", ascending=False)
