@@ -381,6 +381,214 @@ def analyze(top: int, months: int) -> None:
     click.echo(f"\nTotal: {len(sold)} sold + {len(asking)} asking records across {df['ref'].nunique()} models")
 
 
+@cli.command()
+@click.option("--host", default="127.0.0.1", help="Bind host.")
+@click.option("--port", default=8077, type=int, help="Bind port.")
+@click.option("--reload", "reload_", is_flag=True, help="Auto-reload on code changes.")
+def serve(host: str, port: int, reload_: bool) -> None:
+    """Run the watch market dashboard web app."""
+    import uvicorn
+
+    uvicorn.run(
+        "watchscraper.web.app:app", host=host, port=port, reload=reload_,
+    )
+
+
+@cli.command()
+@click.option("--output-dir", "-o", type=click.Path(), default="data", help="Directory for CSV exports.")
+def organize(output_dir: str) -> None:
+    """Categorize, clean, and organize all price records by family and tier."""
+    import warnings
+
+    warnings.filterwarnings("ignore")
+
+    from watchscraper.analysis import build_clean_dataset, cleaning_report
+    from watchscraper.database import engine
+
+    df = build_clean_dataset(engine)
+    report = cleaning_report(df)
+
+    click.echo("=" * 78)
+    click.echo("DATA QUALITY")
+    click.echo("=" * 78)
+    click.echo(f"  Total records:   {report['total']}")
+    click.echo(f"  Junk (parts/accessories/fakes by keyword): {report['junk']}")
+    click.echo(f"  Suspect (below cross-source price anchor): {report['suspect']}")
+    click.echo(f"  Statistical outliers (MAD z > 3.5):        {report['outliers']}")
+    click.echo(f"  Uncategorized:   {report['uncategorized']}")
+    click.echo(f"  Clean:           {report['clean']} ({report['clean_pct']}%)")
+
+    clean = df[df["clean"]]
+    sold = clean[clean["price_type"] == "sold"]
+    fam = (
+        sold.groupby(["tier", "brand", "family"])
+        .agg(n=("price", "size"), median=("price", "median"),
+             p25=("price", lambda s: s.quantile(0.25)),
+             p75=("price", lambda s: s.quantile(0.75)))
+        .reset_index()
+        .sort_values("median", ascending=False)
+    )
+    click.echo(f"\n{'=' * 78}")
+    click.echo("FAMILIES BY PRICE (median clean sold price)")
+    click.echo("=" * 78)
+    tier_order = ["ultra", "high", "mid", "entry"]
+    for tier in tier_order:
+        tier_rows = fam[fam["tier"] == tier]
+        if tier_rows.empty:
+            continue
+        click.echo(f"\n  {tier.upper()}")
+        for _, r in tier_rows.iterrows():
+            click.echo(
+                f"    {r['brand']:<22s} {r['family']:<20s} "
+                f"${r['median']:>10,.0f}  [{r['p25']:>9,.0f} – {r['p75']:>10,.0f}]  ({int(r['n'])} sales)"
+            )
+
+    outpath = Path(output_dir)
+    outpath.mkdir(parents=True, exist_ok=True)
+    df.to_csv(outpath / "records_organized.csv", index=False)
+    fam.to_csv(outpath / "families_by_price.csv", index=False)
+    click.echo(f"\nExported {len(df)} records to {outpath / 'records_organized.csv'}")
+
+
+@cli.command()
+def snapshot() -> None:
+    """Compute and store weekly price snapshots per family."""
+    import warnings
+
+    warnings.filterwarnings("ignore")
+
+    from watchscraper.analysis import build_clean_dataset, store_snapshots, weekly_medians
+    from watchscraper.database import engine
+
+    df = build_clean_dataset(engine)
+    weekly = weekly_medians(df)
+    n = store_snapshots(engine, weekly)
+    click.echo(
+        f"Stored {n} weekly snapshots "
+        f"({weekly['family'].nunique()} families, "
+        f"{weekly['week'].min():%Y-%m-%d} → {weekly['week'].max():%Y-%m-%d})"
+    )
+
+
+@cli.command("macro-fetch")
+def macro_fetch() -> None:
+    """Fetch macro market data (FRED) into macro_series."""
+    from watchscraper.database import engine
+    from watchscraper.macro import fetch_all
+
+    counts = fetch_all(engine)
+    for series_id, n in counts.items():
+        click.echo(f"  {series_id:<12s} {n} observations")
+    click.echo("Macro fetch complete.")
+
+
+@cli.command()
+@click.option("--horizon", "-h", type=int, default=8, help="Forecast horizon in weeks.")
+@click.option("--output-dir", "-o", type=click.Path(), default="data", help="Directory for CSV exports.")
+def forecast(horizon: int, output_dir: str) -> None:
+    """Run the full quant analysis: signals, index, forecasts, macro overlay."""
+    import warnings
+
+    warnings.filterwarnings("ignore")
+
+    import pandas as pd
+
+    from watchscraper.analysis import build_clean_dataset, weekly_medians
+    from watchscraper.database import engine
+    from watchscraper.macro import load_weekly as load_macro_weekly
+    from watchscraper.quant import (
+        build_market_index,
+        family_signals,
+        forecast_families,
+        forecast_series,
+        macro_correlations,
+    )
+
+    df = build_clean_dataset(engine)
+    weekly = weekly_medians(df)
+    signals = family_signals(df, weekly)
+    index = build_market_index(weekly)
+
+    outpath = Path(output_dir)
+    outpath.mkdir(parents=True, exist_ok=True)
+
+    # ── Signal table ──
+    click.echo("=" * 100)
+    click.echo("FAMILY QUANT SIGNALS (clean eBay sold data)")
+    click.echo("=" * 100)
+    click.echo(
+        f"{'family':<20s} {'median':>9s} {'95% CI':>21s} {'trend%/mo':>10s} "
+        f"{'MK p':>6s} {'vol%':>6s} {'mom%':>6s} {'spread%':>8s} {'n':>5s}"
+    )
+    for _, r in signals.iterrows():
+        ci = f"[{r['median_ci_lo']:>8,.0f}–{r['median_ci_hi']:>9,.0f}]"
+        click.echo(
+            f"{r['family']:<20s} {r['median_usd']:>9,.0f} {ci:>21s} "
+            f"{r['trend_pct_mo']:>10.1f} {r['mk_pvalue']:>6.2f} "
+            f"{r['vol_ann_pct']:>6.1f} {r['momentum_pct']:>6.1f} "
+            f"{r['ask_sold_spread_pct']:>8.1f} {int(r['n_sold']):>5d}"
+        )
+    signals.to_csv(outpath / "family_signals.csv", index=False)
+
+    # ── Market index ──
+    if not index.empty:
+        click.echo(f"\n{'=' * 100}")
+        click.echo("WATCH MARKET INDEX (equal-weight family medians, rebased 100)")
+        click.echo("=" * 100)
+        for week, val in index.items():
+            bar = "█" * int(max(0, val - 90))
+            click.echo(f"  {week:%Y-%m-%d}  {val:7.2f}  {bar}")
+        index.to_frame().to_csv(outpath / "market_index.csv")
+
+        idx_fc = forecast_series(index, horizon_weeks=horizon)
+        if idx_fc is not None:
+            click.echo(f"\n  INDEX FORECAST ({horizon} weeks):")
+            for _, r in idx_fc.iterrows():
+                click.echo(
+                    f"    {r['week']:%Y-%m-%d}  {r['forecast']:7.2f}  "
+                    f"90% band [{r['p05']:6.2f} – {r['p95']:6.2f}]"
+                )
+            idx_fc.to_csv(outpath / "index_forecast.csv", index=False)
+
+    # ── Family forecasts ──
+    fcs = forecast_families(weekly, horizon_weeks=horizon)
+    if fcs:
+        click.echo(f"\n{'=' * 100}")
+        click.echo(f"FAMILY PRICE FORECASTS ({horizon}-week horizon, shrunk Theil-Sen + bootstrap)")
+        click.echo("=" * 100)
+        rows = []
+        for family, fc in sorted(fcs.items()):
+            last = fc.iloc[-1]
+            spot = weekly[
+                (weekly["family"] == family) & (weekly["price_type"] == "sold")
+            ].sort_values("week")["median"].iloc[-1]
+            chg = (last["forecast"] / spot - 1) * 100
+            click.echo(
+                f"  {family:<22s} spot ${spot:>9,.0f} → ${last['forecast']:>9,.0f} "
+                f"({chg:+5.1f}%)  90% [{last['p05']:>9,.0f} – {last['p95']:>10,.0f}]"
+            )
+            fc2 = fc.copy()
+            fc2["family"] = family
+            rows.append(fc2)
+        pd.concat(rows).to_csv(outpath / "family_forecasts.csv", index=False)
+
+    # ── Macro overlay ──
+    macro = load_macro_weekly(engine)
+    if not macro.empty and not index.empty:
+        corr = macro_correlations(index, macro)
+        if not corr.empty:
+            click.echo(f"\n{'=' * 100}")
+            click.echo("MACRO FACTOR CORRELATIONS (weekly returns — descriptive only, short overlap)")
+            click.echo("=" * 100)
+            for _, r in corr.iterrows():
+                c = f"{r['corr']:+.2f}" if pd.notna(r["corr"]) else "  n/a"
+                p = f"{r['pvalue']:.2f}" if pd.notna(r["pvalue"]) else " n/a"
+                click.echo(f"  {r['factor']:<12s} corr {c}  (p={p}, n={int(r['n_weeks'])} weeks)")
+            corr.to_csv(outpath / "macro_correlations.csv", index=False)
+
+    click.echo(f"\nCSV exports written to {outpath}/")
+
+
 def _build_queries(brand: str | None, custom_query: str | None) -> list[str]:
     """Build search queries from brand or custom query."""
     if custom_query:

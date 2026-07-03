@@ -1,0 +1,327 @@
+{% extends "base.html" %}
+{% block title %}Watches{% endblock %}
+{% block content %}
+  <h1>Watch explorer</h1>
+  <p class="subtitle">Browse by collection or by reference — every reference number is its own watch with its own market value.</p>
+
+  <div class="filter-row">
+    <div class="seg-control" role="tablist">
+      <button class="seg active" id="mode-families">Collections</button>
+      <button class="seg" id="mode-refs">References</button>
+    </div>
+    <input type="search" id="f-search" placeholder="Search ref, nickname, family…">
+    <select id="f-brand"><option value="">All brands</option></select>
+    <select id="f-tier">
+      <option value="">All tiers</option>
+      <option value="ultra">Ultra (&gt;$40k)</option>
+      <option value="high">High ($15–40k)</option>
+      <option value="mid">Mid ($5–15k)</option>
+      <option value="entry">Entry (&lt;$5k)</option>
+    </select>
+    <select id="f-sort">
+      <option value="median_desc">Price: high → low</option>
+      <option value="median_asc">Price: low → high</option>
+      <option value="momentum_desc">Momentum: hottest</option>
+      <option value="momentum_asc">Momentum: coldest</option>
+      <option value="liquidity_desc">Liquidity: most sales</option>
+      <option value="premium_desc">Premium vs retail</option>
+    </select>
+    <button class="btn table-toggle" id="toggle-view">Table view</button>
+  </div>
+
+  <div class="watch-grid" id="grid"></div>
+
+  <div class="card" id="table-card" style="display:none">
+    <table class="data" id="table">
+      <thead><tr>
+        <th>Brand</th><th>Family</th><th>Tier</th>
+        <th class="num">Median</th><th class="num">95% CI</th>
+        <th class="num">Trend %/mo</th><th class="num">Momentum</th>
+        <th class="num">Volatility</th><th class="num">Ask/sold</th><th class="num">Sales</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+import { sparkline, fmtUSD, fmtPct } from "/static/charts.js?v=2";
+
+const [famResp, refResp] = await Promise.all([
+  fetch("/api/families"), fetch("/api/refs"),
+]);
+const { families } = await famResp.json();
+const { refs } = await refResp.json();
+
+// Tier for refs derives from their own value
+function tierOf(v) {
+  if (v == null) return null;
+  if (v >= 40000) return "ultra";
+  if (v >= 15000) return "high";
+  if (v >= 5000) return "mid";
+  return "entry";
+}
+for (const r of refs) r.tier = tierOf(r.median_usd);
+
+const brands = [...new Set(families.map((f) => f.brand))].sort();
+const brandSel = document.getElementById("f-brand");
+for (const b of brands) {
+  const o = document.createElement("option");
+  o.value = b; o.textContent = b;
+  brandSel.appendChild(o);
+}
+
+const state = { q: "", brand: "", tier: "", sort: "median_desc", table: false, mode: "families" };
+
+function searchText(item) {
+  if (state.mode === "refs") {
+    return [item.ref, item.brand, item.family, item.model, ...(item.nicknames || [])]
+      .join(" ").toLowerCase();
+  }
+  return (item.family + " " + item.brand).toLowerCase();
+}
+
+function filtered() {
+  const pool = state.mode === "refs" ? refs : families;
+  let rows = pool.filter((f) =>
+    (!state.brand || f.brand === state.brand) &&
+    (!state.tier || f.tier === state.tier) &&
+    (!state.q || searchText(f).includes(state.q)));
+  const key = {
+    median_desc: (a, b) => (b.median_usd ?? 0) - (a.median_usd ?? 0),
+    median_asc: (a, b) => (a.median_usd ?? 0) - (b.median_usd ?? 0),
+    momentum_desc: (a, b) => (b.momentum_pct ?? -1e9) - (a.momentum_pct ?? -1e9),
+    momentum_asc: (a, b) => (a.momentum_pct ?? 1e9) - (b.momentum_pct ?? 1e9),
+    liquidity_desc: (a, b) => b.n_sold - a.n_sold,
+    premium_desc: (a, b) => (b.premium_pct ?? -1e9) - (a.premium_pct ?? -1e9),
+  }[state.sort];
+  return rows.sort(key);
+}
+
+function renderRefCards(rows, grid) {
+  for (const r of rows) {
+    const card = document.createElement("a");
+    card.className = "watch-card";
+    card.href = "/refs/" + r.slug;
+
+    if (r.image) {
+      const img = document.createElement("img");
+      img.className = "photo";
+      img.src = r.image;
+      img.alt = r.brand + " " + r.ref;
+      img.loading = "lazy";
+      card.appendChild(img);
+    }
+
+    const brand = document.createElement("div");
+    brand.className = "brand";
+    brand.textContent = r.brand + " · " + (r.family || "");
+    const fam = document.createElement("div");
+    fam.className = "family";
+    fam.textContent = r.ref;
+    if (r.nicknames.length) {
+      const nick = document.createElement("span");
+      nick.style.cssText = "color:var(--accent-gold);font-size:12px;font-weight:500;margin-left:7px";
+      nick.textContent = "“" + r.nicknames[0] + "”";
+      fam.appendChild(nick);
+    }
+    const price = document.createElement("div");
+    price.className = "price";
+    price.textContent = fmtUSD(r.median_usd);
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const parts = [r.n_sold + " sales"];
+    if (r.years) parts.push(r.years);
+    meta.textContent = parts.join(" · ");
+
+    const sparkRow = document.createElement("div");
+    sparkRow.className = "spark-row";
+    const badges = document.createElement("span");
+    if (r.tier) {
+      const tier = document.createElement("span");
+      tier.className = "badge tier-" + r.tier;
+      tier.textContent = r.tier;
+      badges.appendChild(tier);
+    }
+    if (r.premium_pct != null) {
+      const prem = document.createElement("span");
+      prem.className = "delta " + (r.premium_pct >= 0 ? "up" : "down");
+      prem.style.marginLeft = "8px";
+      prem.textContent = fmtPct(r.premium_pct) + " vs retail";
+      badges.appendChild(prem);
+    }
+    sparkRow.append(badges);
+    card.append(brand, fam, price, meta, sparkRow);
+    grid.appendChild(card);
+  }
+}
+
+function renderRefTable(rows) {
+  const thead = document.querySelector("#table thead tr");
+  thead.textContent = "";
+  for (const [label, num] of [["Ref", false], ["Family", false], ["Years", false],
+      ["Nicknames", false], ["Value", true], ["IQR", true], ["vs retail", true], ["Sales", true]]) {
+    const th = document.createElement("th");
+    if (num) th.className = "num";
+    th.textContent = label;
+    thead.appendChild(th);
+  }
+  const tbody = document.querySelector("#table tbody");
+  tbody.textContent = "";
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
+    tr.addEventListener("click", () => location.href = "/refs/" + r.slug);
+    const cells = [
+      [r.brand + " " + r.ref, false],
+      [r.family || "—", false],
+      [r.years || "—", false],
+      [r.nicknames.join(", ") || "—", false],
+      [fmtUSD(r.median_usd), true],
+      [fmtUSD(r.p25_usd, true) + " – " + fmtUSD(r.p75_usd, true), true],
+      [r.premium_pct != null ? fmtPct(r.premium_pct) : "—", true],
+      [String(r.n_sold), true],
+    ];
+    for (const [txt, num] of cells) {
+      const td = document.createElement("td");
+      if (num) td.className = "num";
+      td.textContent = txt;
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+}
+
+const FAMILY_HEADERS = [["Brand", false], ["Family", false], ["Tier", false],
+  ["Median", true], ["95% CI", true], ["Trend %/mo", true], ["Momentum", true],
+  ["Volatility", true], ["Ask/sold", true], ["Sales", true]];
+
+function render() {
+  const rows = filtered();
+  const grid = document.getElementById("grid");
+  const tableCard = document.getElementById("table-card");
+  grid.style.display = state.table ? "none" : "";
+  tableCard.style.display = state.table ? "" : "none";
+
+  if (state.mode === "refs") {
+    if (state.table) { renderRefTable(rows); return; }
+    grid.textContent = "";
+    renderRefCards(rows, grid);
+    return;
+  }
+
+  if (state.table) {
+    const thead = document.querySelector("#table thead tr");
+    thead.textContent = "";
+    for (const [label, num] of FAMILY_HEADERS) {
+      const th = document.createElement("th");
+      if (num) th.className = "num";
+      th.textContent = label;
+      thead.appendChild(th);
+    }
+    const tbody = document.querySelector("#table tbody");
+    tbody.textContent = "";
+    for (const f of rows) {
+      const tr = document.createElement("tr");
+      tr.style.cursor = "pointer";
+      tr.addEventListener("click", () => location.href = "/watches/" + f.slug);
+      const cells = [
+        [f.brand, false], [f.family, false], [f.tier ?? "—", false],
+        [fmtUSD(f.median_usd), true],
+        [fmtUSD(f.median_ci_lo, true) + " – " + fmtUSD(f.median_ci_hi, true), true],
+        [fmtPct(f.trend_pct_mo), true], [fmtPct(f.momentum_pct), true],
+        [f.vol_ann_pct != null ? f.vol_ann_pct.toFixed(0) + "%" : "—", true],
+        [fmtPct(f.ask_sold_spread_pct, false), true],
+        [String(f.n_sold), true],
+      ];
+      for (const [txt, num] of cells) {
+        const td = document.createElement("td");
+        if (num) td.className = "num";
+        td.textContent = txt;
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+    return;
+  }
+
+  grid.textContent = "";
+  for (const f of rows) {
+    const card = document.createElement("a");
+    card.className = "watch-card";
+    card.href = "/watches/" + f.slug;
+
+    if (f.image) {
+      const img = document.createElement("img");
+      img.className = "photo";
+      img.src = f.image;
+      img.alt = f.brand + " " + f.family;
+      img.loading = "lazy";
+      card.appendChild(img);
+    }
+
+    const brand = document.createElement("div");
+    brand.className = "brand"; brand.textContent = f.brand;
+    const fam = document.createElement("div");
+    fam.className = "family"; fam.textContent = f.family;
+    const price = document.createElement("div");
+    price.className = "price"; price.textContent = fmtUSD(f.median_usd);
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = f.n_sold + " sales · CI " + fmtUSD(f.median_ci_lo, true) + "–" + fmtUSD(f.median_ci_hi, true);
+
+    const sparkRow = document.createElement("div");
+    sparkRow.className = "spark-row";
+    const spark = document.createElement("span");
+    const badges = document.createElement("span");
+    if (f.tier) {
+      const tier = document.createElement("span");
+      tier.className = "badge tier-" + f.tier;
+      tier.textContent = f.tier;
+      badges.appendChild(tier);
+    }
+    if (f.momentum_pct != null && Math.abs(f.momentum_pct) >= 0.05) {
+      const mom = document.createElement("span");
+      mom.className = "delta " + (f.momentum_pct > 0 ? "up" : "down");
+      mom.style.marginLeft = "8px";
+      mom.textContent = (f.momentum_pct > 0 ? "▲ " : "▼ ") + fmtPct(f.momentum_pct);
+      badges.appendChild(mom);
+    }
+    sparkRow.append(badges, spark);
+    card.append(brand, fam, price, meta, sparkRow);
+    grid.appendChild(card);
+    sparkline(spark, f.sparkline);
+  }
+}
+
+document.getElementById("f-search").addEventListener("input", (e) => { state.q = e.target.value.toLowerCase(); render(); });
+brandSel.addEventListener("change", (e) => { state.brand = e.target.value; render(); });
+document.getElementById("f-tier").addEventListener("change", (e) => { state.tier = e.target.value; render(); });
+document.getElementById("f-sort").addEventListener("change", (e) => { state.sort = e.target.value; render(); });
+document.getElementById("toggle-view").addEventListener("click", (e) => {
+  state.table = !state.table;
+  e.target.textContent = state.table ? "Card view" : "Table view";
+  render();
+});
+
+const modeFam = document.getElementById("mode-families");
+const modeRefs = document.getElementById("mode-refs");
+function setMode(mode) {
+  state.mode = mode;
+  modeFam.classList.toggle("active", mode === "families");
+  modeRefs.classList.toggle("active", mode === "refs");
+  // Momentum sorts only exist at family level
+  const sortSel = document.getElementById("f-sort");
+  if (mode === "refs" && sortSel.value.startsWith("momentum")) {
+    sortSel.value = "median_desc";
+    state.sort = "median_desc";
+  }
+  render();
+}
+modeFam.addEventListener("click", () => setMode("families"));
+modeRefs.addEventListener("click", () => setMode("refs"));
+if (location.hash === "#refs") setMode("refs");
+else render();
+</script>
+{% endblock %}

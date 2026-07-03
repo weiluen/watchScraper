@@ -4,8 +4,10 @@ import logging
 
 from sqlalchemy import select
 
+from watchscraper.analysis import _match_family
+from watchscraper.catalog import ADDITIONAL_WATCHES, all_metadata
 from watchscraper.database import get_session
-from watchscraper.models import Brand, Source, Watch, WatchAlias
+from watchscraper.models import Brand, Source, Watch, WatchAlias, WatchNickname
 
 logger = logging.getLogger(__name__)
 
@@ -548,6 +550,79 @@ def run_seed() -> None:
                 session.flush()
                 watch_map[ref] = watch.id
                 logger.info("Added watch: %s %s", brand_slug, ref)
+
+        # Additional references introduced by the reference-centric catalog
+        for brand_slug, ref, model, size, material, dial, mvmt, retail in ADDITIONAL_WATCHES:
+            brand_id = brand_map[brand_slug]
+            existing = session.execute(
+                select(Watch).where(
+                    Watch.brand_id == brand_id,
+                    Watch.reference_number == ref,
+                )
+            ).scalar_one_or_none()
+            if existing:
+                watch_map[ref] = existing.id
+            else:
+                watch = Watch(
+                    brand_id=brand_id,
+                    reference_number=ref,
+                    model_name=model,
+                    case_size_mm=size,
+                    case_material=material,
+                    dial_color=dial,
+                    movement=mvmt,
+                    retail_price_usd=retail,
+                )
+                session.add(watch)
+                session.flush()
+                watch_map[ref] = watch.id
+                logger.info("Added watch: %s %s", brand_slug, ref)
+
+        # Reference-centric metadata: production windows, families, variants
+        metadata = all_metadata()
+        slug_by_brand_id = {v: k for k, v in brand_map.items()}
+        all_watches = session.execute(select(Watch)).scalars().all()
+        curated = derived = 0
+        for w in all_watches:
+            brand_slug = slug_by_brand_id.get(w.brand_id)
+            meta = metadata.get((brand_slug, w.reference_number))
+            if meta:
+                w.family = meta.family
+                w.production_start_year = meta.start
+                w.production_end_year = meta.end
+                if meta.bezel:
+                    w.bezel = meta.bezel
+                if meta.bracelet:
+                    w.bracelet = meta.bracelet
+                if meta.has_date is not None:
+                    w.has_date = meta.has_date
+                curated += 1
+            if not w.family:
+                # Derive the collection name from the model name
+                _, family = _match_family(w.model_name or "")
+                if family:
+                    w.family = family
+                    derived += 1
+        logger.info("Metadata applied: %d curated, %d families derived", curated, derived)
+
+        # Nicknames (many references may share one nickname)
+        nickname_count = 0
+        for w in all_watches:
+            brand_slug = slug_by_brand_id.get(w.brand_id)
+            meta = metadata.get((brand_slug, w.reference_number))
+            if not meta or not meta.nicknames:
+                continue
+            for nick in meta.nicknames:
+                existing = session.execute(
+                    select(WatchNickname).where(
+                        WatchNickname.watch_id == w.id,
+                        WatchNickname.nickname == nick,
+                    )
+                ).scalar_one_or_none()
+                if not existing:
+                    session.add(WatchNickname(watch_id=w.id, nickname=nick))
+                    nickname_count += 1
+        logger.info("Nicknames added: %d", nickname_count)
 
         # Aliases
         for canonical_ref, alias_list in ALIASES.items():

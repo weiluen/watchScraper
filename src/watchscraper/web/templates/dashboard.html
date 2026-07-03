@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Market{% endblock %}
+{% block content %}
+  <h1>The market this week</h1>
+  <p class="subtitle">Equal-weight index of 30+ model families, marked from cleaned sold prices.</p>
+
+  <div class="row cols-4" id="kpi-row">
+    <div class="card stat-tile">
+      <div class="label">Watch market index</div>
+      <div class="value hero" id="kpi-index">—</div>
+      <div><span class="delta" id="kpi-index-delta"></span>
+      <span class="context" id="kpi-index-since"></span></div>
+    </div>
+    <div class="card stat-tile">
+      <div class="label">Model families tracked</div>
+      <div class="value" id="kpi-families">—</div>
+      <div class="context">across 9 luxury brands</div>
+    </div>
+    <div class="card stat-tile">
+      <div class="label">Clean market observations</div>
+      <div class="value" id="kpi-records">—</div>
+      <div class="context" id="kpi-sold-note"></div>
+    </div>
+    <div class="card stat-tile">
+      <div class="label">Data quality</div>
+      <div class="value" id="kpi-quality">—</div>
+      <div class="context" id="kpi-quality-note"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Market index — 13 weeks &amp; 8-week outlook</h2>
+      <span class="hint">Rebased to 100 · shaded region is the 90% forecast band</span>
+    </div>
+    <div id="index-chart"></div>
+  </div>
+
+  <div class="row cols-2">
+    <div class="card">
+      <div class="card-head"><h2>Heating up</h2><span class="hint">4-week momentum</span></div>
+      <div id="gainers"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Cooling off</h2><span class="hint">4-week momentum</span></div>
+      <div id="losers"></div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+import { lineChart, fmtUSD, fmtPct } from "/static/charts.js?v=2";
+
+const data = await (await fetch("/api/overview")).json();
+const k = data.kpis;
+
+document.getElementById("kpi-index").textContent = k.index_level != null ? k.index_level.toFixed(1) : "—";
+const deltaEl = document.getElementById("kpi-index-delta");
+if (k.index_change_pct != null) {
+  deltaEl.textContent = (k.index_change_pct > 0 ? "▲ " : k.index_change_pct < 0 ? "▼ " : "") + fmtPct(k.index_change_pct);
+  deltaEl.className = "delta " + (k.index_change_pct > 0.5 ? "up" : k.index_change_pct < -0.5 ? "down" : "flat");
+  document.getElementById("kpi-index-since").textContent = " since " + k.week_start;
+}
+document.getElementById("kpi-families").textContent = k.n_families;
+document.getElementById("kpi-records").textContent = k.n_clean_records.toLocaleString("en-US");
+document.getElementById("kpi-sold-note").textContent = k.n_sold.toLocaleString("en-US") + " realized sales";
+const q = data.quality;
+document.getElementById("kpi-quality").textContent = q.clean_pct + "%";
+document.getElementById("kpi-quality-note").textContent =
+  (q.junk + q.suspect + q.outliers).toLocaleString("en-US") + " listings filtered out";
+
+// Index chart: history + dashed forecast + 90% band
+const fc = data.index_forecast;
+const series = [
+  { name: "Index", color: "#3987e5", points: data.index, wash: true },
+];
+const bands = [];
+if (fc.length) {
+  const bridge = data.index[data.index.length - 1];
+  series.push({
+    name: "Forecast", color: "#9085e9", dashed: true,
+    points: [{ date: bridge.date, value: bridge.value },
+             ...fc.map((p) => ({ date: p.date, value: p.forecast }))],
+  });
+  bands.push({
+    name: "90% band", color: "#9085e9",
+    points: [{ date: bridge.date, lower: bridge.value, upper: bridge.value },
+             ...fc.map((p) => ({ date: p.date, lower: p.p05, upper: p.p95 }))],
+  });
+}
+lineChart(document.getElementById("index-chart"), {
+  series, bands, height: 300, yFmt: (v) => v.toFixed(1),
+});
+
+function moverRows(el, rows) {
+  for (const m of rows) {
+    const row = document.createElement("a");
+    row.className = "mover-row";
+    row.href = "/watches/" + m.slug;
+    const name = document.createElement("div");
+    name.className = "name";
+    const fam = document.createElement("div");
+    fam.className = "fam"; fam.textContent = m.family;
+    const br = document.createElement("div");
+    br.className = "br"; br.textContent = m.brand;
+    name.append(fam, br);
+    const price = document.createElement("span");
+    price.className = "val"; price.textContent = fmtUSD(m.median_usd, true);
+    const mom = document.createElement("span");
+    mom.className = "delta " + (m.momentum_pct > 0 ? "up" : "down");
+    mom.style.minWidth = "64px"; mom.style.textAlign = "right";
+    mom.textContent = (m.momentum_pct > 0 ? "▲ " : "▼ ") + fmtPct(m.momentum_pct);
+    row.append(name, price, mom);
+    el.appendChild(row);
+  }
+}
+moverRows(document.getElementById("gainers"), data.gainers);
+moverRows(document.getElementById("losers"), data.losers);
+</script>
+{% endblock %}

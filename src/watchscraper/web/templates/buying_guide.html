@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Buying guide{% endblock %}
+{% block content %}
+  <h1>Buying guide</h1>
+  <p class="subtitle">A quantitative screen for your next purchase — families ranked by dip, price stability, exit liquidity, and discount to dealer ask. A screen, not gospel: always inspect the specific watch.</p>
+
+  <div id="candidates"></div>
+
+  <p class="footnote">Score components: <strong>recent dip</strong> = negative 4-week momentum (buying weakness, not chasing);
+  <strong>stable value</strong> = low annualized volatility of weekly medians; <strong>liquid market</strong> = healthy 5–25% ask/sold
+  spread with real sales volume; <strong>sold below dealer ask</strong> = realized prices far under Chrono24 asking, i.e. private-sale
+  discount. Minimum 30 clean sales required.</p>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+import { sparkline, fmtUSD, fmtPct } from "/static/charts.js?v=2";
+
+const { candidates } = await (await fetch("/api/buying-guide")).json();
+const wrap = document.getElementById("candidates");
+
+candidates.slice(0, 12).forEach((c, i) => {
+  const card = document.createElement("a");
+  card.className = "card";
+  card.href = "/watches/" + c.slug;
+  card.style.display = "flex";
+  card.style.alignItems = "center";
+  card.style.gap = "20px";
+  if (i) card.style.marginTop = "12px";
+
+  const rank = document.createElement("div");
+  rank.style.cssText = "font-size:22px;font-weight:650;color:var(--ink-muted);width:34px;text-align:center";
+  rank.textContent = String(i + 1);
+
+  let img = null;
+  if (c.image) {
+    img = document.createElement("img");
+    img.className = "guide-photo";
+    img.src = c.image;
+    img.alt = c.brand + " " + c.family;
+    img.loading = "lazy";
+  }
+
+  const name = document.createElement("div");
+  name.style.flex = "1";
+  const brand = document.createElement("div");
+  brand.className = "brand";
+  brand.style.cssText = "color:var(--ink-muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em";
+  brand.textContent = c.brand;
+  const fam = document.createElement("div");
+  fam.style.cssText = "color:var(--ink);font-size:17px;font-weight:600";
+  fam.textContent = c.family;
+  const chips = document.createElement("div");
+  chips.style.marginTop = "6px";
+  for (const r of c.reasons) {
+    const chip = document.createElement("span");
+    chip.className = "reason-chip";
+    chip.textContent = r;
+    chips.appendChild(chip);
+  }
+  name.append(brand, fam, chips);
+
+  const spark = document.createElement("span");
+
+  const stats = document.createElement("div");
+  stats.style.cssText = "text-align:right;min-width:150px";
+  const price = document.createElement("div");
+  price.style.cssText = "color:var(--ink);font-size:19px;font-weight:600";
+  price.textContent = fmtUSD(c.median_usd);
+  const meta = document.createElement("div");
+  meta.style.cssText = "color:var(--ink-muted);font-size:12px";
+  const momTxt = c.momentum_pct != null ? fmtPct(c.momentum_pct) + " last 4w" : "";
+  meta.textContent = momTxt + (momTxt ? " · " : "") + c.n_sold + " sales";
+  stats.append(price, meta);
+
+  if (img) card.append(rank, img, name, spark, stats);
+  else card.append(rank, name, spark, stats);
+  wrap.appendChild(card);
+  sparkline(spark, c.sparkline, { width: 120, height: 36 });
+});
+
+if (!candidates.length) {
+  const note = document.createElement("p");
+  note.className = "empty-note";
+  note.textContent = "Not enough data to build the screen yet.";
+  wrap.appendChild(note);
+}
+</script>
+{% endblock %}

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from watchscraper.database import get_session
 from watchscraper.dedup import get_existing_external_ids
+from watchscraper.matching import Matcher
 from watchscraper.models import (
     PriceRecord,
     ScrapeRun,
@@ -126,13 +127,14 @@ def run_pipeline(
             "After dedup: %d new / %d total", len(new_listings), len(listings)
         )
 
-        # 3. Normalize + insert
+        # 3. Match to references + insert
+        matcher = Matcher.from_session(session)
         inserted = 0
         for listing in new_listings:
-            watch_id = _resolve_watch_id(session, listing)
+            match = matcher.match(listing.title, query=query)
 
             record = PriceRecord(
-                watch_id=watch_id,
+                watch_id=match.watch_id,
                 source_id=source.id,
                 price_usd=listing.price_usd,
                 price_type=listing.price_type,
@@ -143,6 +145,10 @@ def run_pipeline(
                 external_id=listing.external_id,
                 title=listing.title,
                 reference_parsed=listing.reference_parsed,
+                match_method=match.method,
+                match_confidence=match.confidence,
+                parsed_year=listing.parsed_year,
+                parsed_attributes=listing.parsed_attributes,
                 observed_at=listing.observed_at,
                 raw_data=listing.raw_data,
             )

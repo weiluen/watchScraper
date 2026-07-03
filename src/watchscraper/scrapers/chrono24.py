@@ -60,7 +60,10 @@ class Chrono24Scraper(BaseScraper):
 
     def _parse_results(self, html: str) -> list[ScrapedListing]:
         soup = BeautifulSoup(html, "lxml")
-        cards = soup.select("div.article-item-container")
+        cards = soup.select("div.js-listing-item-container")
+        if not cards:
+            # Legacy layout fallback
+            cards = soup.select("div.article-item-container")
 
         results: list[ScrapedListing] = []
         seen_ids: set[str] = set()

@@ -1,9 +1,10 @@
 import enum
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     Enum,
     Float,
@@ -31,6 +32,13 @@ class Brand(Base):
 
 
 class Watch(Base):
+    """One reference number = one watch. The atomic unit of the catalog.
+
+    Values are derived per reference (the variant: dial/material/bezel combo);
+    `family` is the common name that groups references (e.g. "Submariner").
+    Production years bound which listings can plausibly be this reference.
+    """
+
     __tablename__ = "watches"
     __table_args__ = (
         UniqueConstraint("brand_id", "reference_number", name="uq_watch_brand_ref"),
@@ -40,18 +48,29 @@ class Watch(Base):
     brand_id: Mapped[int] = mapped_column(ForeignKey("brands.id"), nullable=False)
     reference_number: Mapped[str] = mapped_column(String(50), nullable=False)
     model_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    family: Mapped[str | None] = mapped_column(String(100), index=True)
     case_size_mm: Mapped[float | None] = mapped_column(Float)
     case_material: Mapped[str | None] = mapped_column(String(100))
     dial_color: Mapped[str | None] = mapped_column(String(100))
+    bezel: Mapped[str | None] = mapped_column(String(100))
+    bracelet: Mapped[str | None] = mapped_column(String(100))
+    has_date: Mapped[bool | None] = mapped_column(Boolean)
     movement: Mapped[str | None] = mapped_column(String(100))
+    production_start_year: Mapped[int | None] = mapped_column(Integer)
+    production_end_year: Mapped[int | None] = mapped_column(Integer)  # None = current
     retail_price_usd: Mapped[int | None] = mapped_column(BigInteger)
 
     brand: Mapped["Brand"] = relationship(back_populates="watches")
     aliases: Mapped[list["WatchAlias"]] = relationship(back_populates="watch")
+    nicknames: Mapped[list["WatchNickname"]] = relationship(back_populates="watch")
     price_records: Mapped[list["PriceRecord"]] = relationship(back_populates="watch")
 
 
 class WatchAlias(Base):
+    """Alternate reference spellings that map 1:1 to a watch (e.g. long-form
+    AP refs). For common names shared by several references, use
+    WatchNickname."""
+
     __tablename__ = "watch_aliases"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -59,6 +78,26 @@ class WatchAlias(Base):
     alias: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
 
     watch: Mapped["Watch"] = relationship(back_populates="aliases")
+
+
+class WatchNickname(Base):
+    """Community common names ("Batman", "Hulk", "Pepsi").
+
+    Deliberately NOT unique per nickname: "Batman" is both 116710BLNR
+    (2013-2019) and 126710BLNR (2019+) — the matcher disambiguates candidates
+    by production-year windows and listing attributes.
+    """
+
+    __tablename__ = "watch_nicknames"
+    __table_args__ = (
+        UniqueConstraint("watch_id", "nickname", name="uq_nickname_per_watch"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    watch_id: Mapped[int] = mapped_column(ForeignKey("watches.id"), nullable=False)
+    nickname: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+
+    watch: Mapped["Watch"] = relationship(back_populates="nicknames")
 
 
 class Source(Base):
@@ -99,11 +138,22 @@ class PriceRecord(Base):
     watch_id: Mapped[int | None] = mapped_column(ForeignKey("watches.id"))
     source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"), nullable=False)
     price_usd: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # Stored as enum VALUES ("asking"), matching the raw-SQL analysis layer
     price_type: Mapped[PriceType] = mapped_column(
-        Enum(PriceType, native_enum=False), nullable=False
+        Enum(
+            PriceType,
+            native_enum=False,
+            values_callable=lambda e: [m.value for m in e],
+        ),
+        nullable=False,
     )
     condition: Mapped[Condition] = mapped_column(
-        Enum(Condition, native_enum=False), default=Condition.UNKNOWN
+        Enum(
+            Condition,
+            native_enum=False,
+            values_callable=lambda e: [m.value for m in e],
+        ),
+        default=Condition.UNKNOWN,
     )
     has_box: Mapped[bool | None] = mapped_column(Boolean)
     has_papers: Mapped[bool | None] = mapped_column(Boolean)
@@ -111,6 +161,10 @@ class PriceRecord(Base):
     external_id: Mapped[str] = mapped_column(String(200), nullable=False)
     title: Mapped[str | None] = mapped_column(Text)
     reference_parsed: Mapped[str | None] = mapped_column(String(50))
+    match_method: Mapped[str | None] = mapped_column(String(30))
+    match_confidence: Mapped[float | None] = mapped_column(Float)
+    parsed_year: Mapped[int | None] = mapped_column(Integer)
+    parsed_attributes: Mapped[dict | None] = mapped_column(JSONB)
     observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     scraped_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -119,6 +173,23 @@ class PriceRecord(Base):
 
     watch: Mapped["Watch | None"] = relationship(back_populates="price_records")
     source: Mapped["Source"] = relationship(back_populates="price_records")
+
+
+class PortfolioHolding(Base):
+    __tablename__ = "portfolio_holdings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    nickname: Mapped[str | None] = mapped_column(String(200))
+    brand: Mapped[str] = mapped_column(String(100), nullable=False)
+    family: Mapped[str] = mapped_column(String(100), nullable=False)
+    reference_number: Mapped[str | None] = mapped_column(String(50))
+    purchase_price_usd: Mapped[float | None] = mapped_column(Float)
+    purchase_date: Mapped[date | None] = mapped_column(Date)
+    condition: Mapped[str | None] = mapped_column(String(20))
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class ScrapeRunStatus(enum.Enum):

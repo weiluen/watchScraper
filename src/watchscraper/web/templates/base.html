@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Complications{% endblock %} — watch market intelligence</title>
+  <link rel="stylesheet" href="/static/app.css?v=2">
+</head>
+<body>
+  <header class="site-header">
+    <a class="wordmark" href="/">Complications<span class="mark-dot">.</span></a>
+    <nav class="site-nav">
+      <a href="/" class="{{ 'active' if nav == 'dashboard' else '' }}">Market</a>
+      <a href="/watches" class="{{ 'active' if nav == 'watches' else '' }}">Watches</a>
+      <a href="/buying-guide" class="{{ 'active' if nav == 'guide' else '' }}">Buying guide</a>
+      <a href="/portfolio" class="{{ 'active' if nav == 'portfolio' else '' }}">My collection</a>
+    </nav>
+    <span class="header-meta">Weekly data · eBay sold + Chrono24 ask</span>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

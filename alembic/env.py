@@ -3,6 +3,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from watchscraper.config import settings
 from watchscraper.database import Base
 from watchscraper.models import (  # noqa: F401 — ensure models are registered
     Brand,
@@ -16,6 +17,10 @@ from watchscraper.models import (  # noqa: F401 — ensure models are registered
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+# Use the runtime DATABASE_URL (env-driven) instead of the static value in
+# alembic.ini, so migrations target the same database the app connects to.
+config.set_main_option("sqlalchemy.url", settings.database_url)
 
 target_metadata = Base.metadata
 

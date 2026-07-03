@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block title %}{{ family }}{% endblock %}
+{% block content %}
+  <p class="subtitle" style="margin-bottom:0"><a href="/watches">← All watches</a></p>
+  <div class="family-hero">
+    <div style="flex:1">
+      <h1 id="fam-title">{{ brand }} {{ family }}</h1>
+      <p class="subtitle" id="fam-sub"></p>
+    </div>
+    <img class="hero-photo" id="fam-photo" alt="{{ brand }} {{ family }}" style="display:none">
+  </div>
+
+  <div class="row cols-4">
+    <div class="card stat-tile">
+      <div class="label">Median sold price</div>
+      <div class="value" id="s-median">—</div>
+      <div class="context" id="s-median-ci"></div>
+    </div>
+    <div class="card stat-tile">
+      <div class="label">Robust trend</div>
+      <div class="value" id="s-trend">—</div>
+      <div class="context" id="s-trend-note"></div>
+    </div>
+    <div class="card stat-tile">
+      <div class="label">4-week momentum</div>
+      <div class="value" id="s-mom">—</div>
+      <div class="context" id="s-vol"></div>
+    </div>
+    <div class="card stat-tile">
+      <div class="label">Dealer ask vs sold</div>
+      <div class="value" id="s-spread">—</div>
+      <div class="context" id="s-premium"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Price history &amp; 8-week outlook</h2>
+      <span class="hint">Weekly medians · shaded regions: sold interquartile range, 90% forecast band</span>
+    </div>
+    <div id="price-chart"></div>
+  </div>
+
+  <div class="row split-main">
+    <div class="card">
+      <div class="card-head"><h2>Recent sales</h2><span class="hint">cleaned eBay sold listings</span></div>
+      <table class="data">
+        <thead><tr><th>Date</th><th>Listing</th><th class="num">Price</th></tr></thead>
+        <tbody id="sales-body"></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>References</h2><span class="hint">each reference is a watch</span></div>
+      <table class="data">
+        <thead><tr><th>Ref</th><th class="num">Value</th><th class="num">vs retail</th></tr></thead>
+        <tbody id="refs-body"></tbody>
+      </table>
+      <p class="footnote" id="refs-empty" style="display:none">No confidently reference-matched sales yet for this family.</p>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+import { lineChart, fmtUSD, fmtPct } from "/static/charts.js?v=2";
+
+const d = await (await fetch("/api/families/{{ slug }}")).json();
+const s = d.signals;
+
+document.getElementById("fam-sub").textContent =
+  (d.tier ? d.tier.toUpperCase() + " tier · " : "") + s.n_sold + " clean sales across " + s.n_weeks + " weeks";
+
+if (d.image) {
+  const photo = document.getElementById("fam-photo");
+  photo.src = d.image;
+  photo.style.display = "";
+}
+
+document.getElementById("s-median").textContent = fmtUSD(s.median_usd);
+document.getElementById("s-median-ci").textContent =
+  "95% CI " + fmtUSD(s.median_ci_lo, true) + " – " + fmtUSD(s.median_ci_hi, true);
+
+const trendEl = document.getElementById("s-trend");
+trendEl.textContent = s.trend_pct_mo != null ? fmtPct(s.trend_pct_mo) + "/mo" : "—";
+if (s.trend_pct_mo != null) trendEl.className = "value " + (s.trend_pct_mo > 1 ? "delta up" : s.trend_pct_mo < -1 ? "delta down" : "");
+trendEl.style.fontSize = "26px";
+document.getElementById("s-trend-note").textContent =
+  s.mk_pvalue != null
+    ? (s.mk_pvalue < 0.05 ? "statistically significant (p=" : "not significant (p=") + s.mk_pvalue.toFixed(2) + ")"
+    : "insufficient history";
+
+const momEl = document.getElementById("s-mom");
+momEl.textContent = s.momentum_pct != null ? fmtPct(s.momentum_pct) : "—";
+if (s.momentum_pct != null) { momEl.className = "value " + (s.momentum_pct > 0 ? "delta up" : "delta down"); momEl.style.fontSize = "26px"; }
+document.getElementById("s-vol").textContent =
+  s.vol_ann_pct != null ? "volatility " + s.vol_ann_pct.toFixed(0) + "% annualized" : "";
+
+document.getElementById("s-spread").textContent =
+  s.ask_sold_spread_pct != null ? "+" + s.ask_sold_spread_pct.toFixed(1) + "%" : "—";
+document.getElementById("s-premium").textContent =
+  s.premium_to_retail_pct != null
+    ? (s.premium_to_retail_pct >= 0 ? "trades " : "trades ") + fmtPct(s.premium_to_retail_pct, false).replace("-", "−") + " vs retail"
+    : "";
+
+// Chart: sold median + IQR band, asking median, forecast + 90% band
+const series = [
+  { name: "Sold (median)", color: "#3987e5",
+    points: d.history.map((p) => ({ date: p.date, value: p.median })) },
+];
+const bands = [
+  { name: "Sold IQR", color: "#3987e5",
+    points: d.history.map((p) => ({ date: p.date, lower: p.p25, upper: p.p75 })) },
+];
+if (d.asking_history.length >= 2) {
+  series.push({ name: "Dealer ask", color: "#199e70",
+    points: d.asking_history.map((p) => ({ date: p.date, value: p.median })) });
+}
+if (d.forecast.length && d.history.length) {
+  const bridge = d.history[d.history.length - 1];
+  series.push({ name: "Forecast", color: "#9085e9", dashed: true,
+    points: [{ date: bridge.date, value: bridge.median },
+             ...d.forecast.map((p) => ({ date: p.date, value: p.forecast }))] });
+  bands.push({ name: "90% band", color: "#9085e9",
+    points: [{ date: bridge.date, lower: bridge.median, upper: bridge.median },
+             ...d.forecast.map((p) => ({ date: p.date, lower: p.p05, upper: p.p95 }))] });
+}
+lineChart(document.getElementById("price-chart"), { series, bands, height: 320, yPrefix: "$" });
+
+const salesBody = document.getElementById("sales-body");
+for (const sale of d.recent_sales) {
+  const tr = document.createElement("tr");
+  const td1 = document.createElement("td");
+  td1.textContent = sale.date;
+  const td2 = document.createElement("td");
+  td2.textContent = sale.title;
+  const td3 = document.createElement("td");
+  td3.className = "num";
+  const strong = document.createElement("strong");
+  strong.textContent = fmtUSD(sale.price);
+  td3.appendChild(strong);
+  tr.append(td1, td2, td3);
+  salesBody.appendChild(tr);
+}
+
+const refsBody = document.getElementById("refs-body");
+if (!d.references.length) {
+  document.getElementById("refs-empty").style.display = "";
+} else {
+  for (const r of d.references) {
+    const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
+    tr.addEventListener("click", () => location.href = "/refs/" + r.slug);
+    const td1 = document.createElement("td");
+    if (r.image) {
+      const img = document.createElement("img");
+      img.className = "holding-photo";
+      img.style.cssText = "float:left;margin-right:10px";
+      img.src = r.image;
+      img.alt = r.ref;
+      img.loading = "lazy";
+      td1.appendChild(img);
+    }
+    const strong = document.createElement("strong");
+    strong.textContent = r.ref;
+    td1.appendChild(strong);
+    if (r.nicknames && r.nicknames.length) {
+      const nick = document.createElement("span");
+      nick.style.cssText = "color:var(--accent-gold);font-size:11px;margin-left:7px";
+      nick.textContent = "“" + r.nicknames.join("” · “") + "”";
+      td1.appendChild(nick);
+    }
+    const subParts = [];
+    if (r.model) subParts.push(r.model);
+    if (r.years) subParts.push(r.years);
+    if (subParts.length) {
+      const sub = document.createElement("div");
+      sub.style.color = "var(--ink-muted)"; sub.style.fontSize = "11px";
+      sub.textContent = subParts.join(" · ");
+      td1.appendChild(sub);
+    }
+    const td2 = document.createElement("td");
+    td2.className = "num";
+    const val = document.createElement("strong");
+    val.textContent = fmtUSD(r.median, true);
+    td2.appendChild(val);
+    const n = document.createElement("div");
+    n.style.cssText = "color:var(--ink-muted);font-size:11px";
+    n.textContent = r.n + " sales";
+    td2.appendChild(n);
+    const td3 = document.createElement("td");
+    td3.className = "num";
+    if (r.premium_pct != null) {
+      const span = document.createElement("span");
+      span.className = "delta " + (r.premium_pct > 0 ? "up" : "down");
+      span.textContent = fmtPct(r.premium_pct);
+      td3.appendChild(span);
+    } else td3.textContent = "—";
+    tr.append(td1, td2, td3);
+    refsBody.appendChild(tr);
+  }
+}
+</script>
+{% endblock %}

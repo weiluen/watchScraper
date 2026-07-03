@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}{{ brand }} {{ ref }}{% endblock %}
+{% block content %}
+  <p class="subtitle" style="margin-bottom:0"><a href="/watches" id="back-link">← All watches</a></p>
+  <div class="family-hero">
+    <div style="flex:1">
+      <h1>{{ brand }} <span style="color:var(--accent-gold)">{{ ref }}</span></h1>
+      <p class="subtitle" id="ref-sub"></p>
+      <div id="ref-nicknames"></div>
+    </div>
+    <img class="hero-photo" id="ref-photo" alt="{{ brand }} {{ ref }}" style="display:none">
+  </div>
+
+  <div class="row cols-4">
+    <div class="card stat-tile">
+      <div class="label">Market value (this reference)</div>
+      <div class="value" id="s-value">—</div>
+      <div class="context" id="s-value-ci"></div>
+    </div>
+    <div class="card stat-tile">
+      <div class="label">Typical range</div>
+      <div class="value" id="s-range" style="font-size:20px">—</div>
+      <div class="context">interquartile of clean sales</div>
+    </div>
+    <div class="card stat-tile">
+      <div class="label">vs retail</div>
+      <div class="value" id="s-premium">—</div>
+      <div class="context" id="s-retail"></div>
+    </div>
+    <div class="card stat-tile">
+      <div class="label">Liquidity</div>
+      <div class="value" id="s-liquidity">—</div>
+      <div class="context">confidently matched sales</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Sales of this reference</h2>
+      <span class="hint">each dot is one sale · line is the family weekly median for context</span>
+    </div>
+    <div id="sales-chart"></div>
+  </div>
+
+  <div class="row split-main">
+    <div class="card">
+      <div class="card-head"><h2>Recent sales</h2><span class="hint">match method shown</span></div>
+      <table class="data">
+        <thead><tr><th>Date</th><th>Listing</th><th>Match</th><th class="num">Price</th></tr></thead>
+        <tbody id="sales-body"></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Other variants</h2><span class="hint" id="fam-link"></span></div>
+      <table class="data">
+        <thead><tr><th>Ref</th><th class="num">Value</th></tr></thead>
+        <tbody id="siblings-body"></tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+import { lineChart, fmtUSD, fmtPct } from "/static/charts.js?v=2";
+
+const d = await (await fetch("/api/refs/{{ slug }}")).json();
+
+const sub = [d.model, d.years, d.current ? "in production" : "discontinued"]
+  .filter(Boolean).join(" · ");
+document.getElementById("ref-sub").textContent = sub;
+document.getElementById("back-link").href = "/watches/" + d.family_slug;
+document.getElementById("back-link").textContent = "← " + d.family;
+document.getElementById("fam-link").textContent = d.family;
+
+if (d.nicknames.length) {
+  const wrap = document.getElementById("ref-nicknames");
+  for (const n of d.nicknames) {
+    const chip = document.createElement("span");
+    chip.className = "reason-chip";
+    chip.style.cssText = "color:var(--accent-gold);border-color:var(--accent-gold)";
+    chip.textContent = "“" + n + "”";
+    wrap.appendChild(chip);
+  }
+}
+if (d.image) {
+  const photo = document.getElementById("ref-photo");
+  photo.src = d.image;
+  photo.style.display = "";
+}
+
+document.getElementById("s-value").textContent = fmtUSD(d.median_usd);
+if (d.median_ci_lo != null) {
+  document.getElementById("s-value-ci").textContent =
+    "95% CI " + fmtUSD(d.median_ci_lo, true) + " – " + fmtUSD(d.median_ci_hi, true);
+}
+document.getElementById("s-range").textContent =
+  fmtUSD(d.p25_usd, true) + " – " + fmtUSD(d.p75_usd, true);
+
+const premEl = document.getElementById("s-premium");
+if (d.premium_pct != null) {
+  premEl.textContent = fmtPct(d.premium_pct);
+  premEl.className = "value delta " + (d.premium_pct >= 0 ? "up" : "down");
+  premEl.style.fontSize = "26px";
+  document.getElementById("s-retail").textContent = "retail " + fmtUSD(d.retail_usd);
+} else {
+  premEl.textContent = "—";
+  document.getElementById("s-retail").textContent = "no retail reference";
+}
+document.getElementById("s-liquidity").textContent = d.n_sold;
+
+// Chart: family median line (context) + this reference's sales as dots
+const series = [];
+if (d.family_history.length >= 2) {
+  series.push({
+    name: d.family + " median", color: "#898781",
+    points: d.family_history.map((p) => ({ date: p.date, value: p.median })),
+  });
+}
+series.push({
+  name: d.ref + " sales", color: "#3987e5", dots: true,
+  points: d.sales_points.map((p) => ({ date: p.date, value: p.value })),
+});
+lineChart(document.getElementById("sales-chart"), { series, height: 300, yPrefix: "$" });
+
+const METHOD_LABELS = {
+  exact_ref: "ref", alias: "alias", nickname: "nickname",
+  nickname_default_gen: "nickname*", nickname_ambiguous: "nickname?",
+  attributes: "attributes",
+};
+const salesBody = document.getElementById("sales-body");
+for (const sale of d.recent_sales) {
+  const tr = document.createElement("tr");
+  const td1 = document.createElement("td");
+  td1.textContent = sale.date;
+  const td2 = document.createElement("td");
+  td2.textContent = sale.title;
+  const td3 = document.createElement("td");
+  td3.style.cssText = "color:var(--ink-muted);font-size:11px";
+  td3.textContent = METHOD_LABELS[sale.method] || sale.method;
+  const td4 = document.createElement("td");
+  td4.className = "num";
+  const strong = document.createElement("strong");
+  strong.textContent = fmtUSD(sale.price);
+  td4.appendChild(strong);
+  tr.append(td1, td2, td3, td4);
+  salesBody.appendChild(tr);
+}
+
+const sibBody = document.getElementById("siblings-body");
+for (const s of d.siblings) {
+  const tr = document.createElement("tr");
+  tr.style.cursor = "pointer";
+  tr.addEventListener("click", () => location.href = "/refs/" + s.slug);
+  const td1 = document.createElement("td");
+  if (s.image) {
+    const img = document.createElement("img");
+    img.className = "holding-photo";
+    img.style.cssText = "float:left;margin-right:10px";
+    img.src = s.image;
+    img.alt = s.ref;
+    img.loading = "lazy";
+    td1.appendChild(img);
+  }
+  const strong = document.createElement("strong");
+  strong.textContent = s.ref;
+  td1.appendChild(strong);
+  const subParts = [];
+  if (s.nicknames.length) subParts.push("“" + s.nicknames.join("”, “") + "”");
+  if (s.years) subParts.push(s.years);
+  if (subParts.length) {
+    const div = document.createElement("div");
+    div.style.cssText = "color:var(--ink-muted);font-size:11px";
+    div.textContent = subParts.join(" · ");
+    td1.appendChild(div);
+  }
+  const td2 = document.createElement("td");
+  td2.className = "num";
+  td2.textContent = fmtUSD(s.median_usd, true);
+  tr.append(td1, td2);
+  sibBody.appendChild(tr);
+}
+</script>
+{% endblock %}

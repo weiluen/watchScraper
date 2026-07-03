@@ -1,0 +1,261 @@
+{% extends "base.html" %}
+{% block title %}My collection{% endblock %}
+{% block content %}
+  <h1>My collection</h1>
+  <p class="subtitle">Your watches, marked to market weekly at their family's median sold price.</p>
+
+  <div class="row cols-4">
+    <div class="card stat-tile">
+      <div class="label">Collection value</div>
+      <div class="value hero" id="p-value">—</div>
+      <div><span class="delta" id="p-gain"></span></div>
+    </div>
+    <div class="card stat-tile">
+      <div class="label">Total cost basis</div>
+      <div class="value" id="p-cost">—</div>
+      <div class="context" id="p-count"></div>
+    </div>
+    <div class="card stat-tile" style="grid-column: span 2">
+      <div class="label">Allocation by brand</div>
+      <div style="display:flex;align-items:center;gap:18px">
+        <div id="p-donut"></div>
+        <div id="p-alloc-legend" class="chart-legend" style="flex-direction:column;align-items:flex-start;gap:6px"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Collection value over time</h2>
+      <span class="hint">weeks where every priced holding has a market mark</span>
+    </div>
+    <div id="p-chart"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Holdings</h2></div>
+    <table class="data">
+      <thead><tr>
+        <th>Watch</th><th>Ref</th><th>Purchased</th>
+        <th class="num">Paid</th><th class="num">Market value</th><th class="num">Gain</th><th></th>
+      </tr></thead>
+      <tbody id="holdings-body"></tbody>
+    </table>
+    <p class="empty-note" id="empty-note" style="display:none">
+      No watches yet — add your first below.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Add a watch</h2><span class="hint">valued against tracked family data</span></div>
+    <form id="add-form" class="form-grid">
+      <div>
+        <label for="a-family">Model family</label>
+        <select id="a-family" required></select>
+      </div>
+      <div>
+        <label for="a-ref">Reference (recommended — values the exact variant)</label>
+        <select id="a-ref"><option value="">Family-level pricing</option></select>
+      </div>
+      <div>
+        <label for="a-nickname">Nickname (optional)</label>
+        <input type="text" id="a-nickname" placeholder="Birthday Sub">
+      </div>
+      <div>
+        <label for="a-price">Purchase price USD (optional)</label>
+        <input type="number" id="a-price" min="1" step="1">
+      </div>
+      <div>
+        <label for="a-date">Purchase date (optional)</label>
+        <input type="date" id="a-date">
+      </div>
+      <div>
+        <button type="submit" class="btn primary" style="width:100%">Add to collection</button>
+      </div>
+    </form>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+import { lineChart, donut, fmtUSD, fmtPct, PALETTE } from "/static/charts.js?v=2";
+
+const [famResp, refResp] = await Promise.all([
+  fetch("/api/families"), fetch("/api/refs"),
+]);
+const { families } = await famResp.json();
+const { refs } = await refResp.json();
+
+const familySel = document.getElementById("a-family");
+for (const f of families) {
+  const o = document.createElement("option");
+  o.value = f.family;
+  o.textContent = f.brand + " — " + f.family;
+  o.dataset.brand = f.brand;
+  familySel.appendChild(o);
+}
+
+// The reference dropdown follows the selected family — each option is a
+// priced variant with its value shown
+const refSel = document.getElementById("a-ref");
+function populateRefs() {
+  refSel.textContent = "";
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "Family-level pricing";
+  refSel.appendChild(none);
+  const famRefs = refs.filter((r) => r.family === familySel.value);
+  famRefs.sort((a, b) => (b.n_sold ?? 0) - (a.n_sold ?? 0));
+  for (const r of famRefs) {
+    const o = document.createElement("option");
+    o.value = r.ref;
+    const nick = r.nicknames.length ? " “" + r.nicknames[0] + "”" : "";
+    const years = r.years ? " (" + r.years + ")" : "";
+    o.textContent = r.ref + nick + years + " — " + fmtUSD(r.median_usd, true);
+    refSel.appendChild(o);
+  }
+}
+familySel.addEventListener("change", populateRefs);
+populateRefs();
+
+async function load() {
+  const p = await (await fetch("/api/portfolio")).json();
+  const t = p.totals;
+
+  document.getElementById("p-value").textContent = t.value != null ? fmtUSD(t.value) : "—";
+  const gainEl = document.getElementById("p-gain");
+  if (t.gain_usd != null) {
+    gainEl.className = "delta " + (t.gain_usd >= 0 ? "up" : "down");
+    gainEl.textContent = (t.gain_usd >= 0 ? "▲ " : "▼ ") + fmtUSD(Math.abs(t.gain_usd)) +
+      (t.gain_pct != null ? " (" + fmtPct(t.gain_pct) + ")" : "");
+  } else gainEl.textContent = "";
+  document.getElementById("p-cost").textContent = t.cost != null ? fmtUSD(t.cost) : "—";
+  document.getElementById("p-count").textContent =
+    t.n_holdings + (t.n_holdings === 1 ? " watch" : " watches") +
+    (t.n_priced < t.n_holdings ? " (" + (t.n_holdings - t.n_priced) + " unpriced)" : "");
+
+  // Allocation donut + its legend (labels never rely on color alone)
+  const donutEl = document.getElementById("p-donut");
+  const legendEl = document.getElementById("p-alloc-legend");
+  legendEl.textContent = "";
+  if (p.allocation.length) {
+    const segs = p.allocation.map((a, i) => ({ ...a, color: PALETTE[i % PALETTE.length] }));
+    donut(donutEl, segs, { size: 120 });
+    const total = segs.reduce((acc, s) => acc + s.value, 0);
+    for (const s of segs) {
+      const item = document.createElement("span");
+      item.className = "lg-item";
+      const sw = document.createElement("span");
+      sw.className = "lg-swatch";
+      sw.style.background = s.color;
+      const name = document.createElement("span");
+      name.textContent = s.label + " · " + Math.round((s.value / total) * 100) + "%";
+      item.append(sw, name);
+      legendEl.appendChild(item);
+    }
+  } else {
+    donutEl.textContent = "";
+    const note = document.createElement("span");
+    note.style.color = "var(--ink-muted)";
+    note.textContent = "Add watches to see allocation";
+    legendEl.appendChild(note);
+  }
+
+  lineChart(document.getElementById("p-chart"), {
+    series: p.series.length >= 2
+      ? [{ name: "Collection value", color: "#3987e5", points: p.series, wash: true }]
+      : [],
+    height: 260, yPrefix: "$",
+  });
+
+  const tbody = document.getElementById("holdings-body");
+  tbody.textContent = "";
+  document.getElementById("empty-note").style.display = p.holdings.length ? "none" : "";
+  for (const h of p.holdings) {
+    const tr = document.createElement("tr");
+
+    const tdName = document.createElement("td");
+    const strong = document.createElement("strong");
+    strong.textContent = h.nickname || (h.brand + " " + h.family);
+    tdName.appendChild(strong);
+    if (h.nickname) {
+      const sub = document.createElement("div");
+      sub.style.cssText = "color:var(--ink-muted);font-size:11px";
+      sub.textContent = h.brand + " " + h.family;
+      tdName.appendChild(sub);
+    }
+
+    const tdRef = document.createElement("td");
+    tdRef.textContent = h.reference_number || "—";
+    if (h.priced_at) {
+      const tag = document.createElement("div");
+      tag.style.cssText = "font-size:10px;color:" +
+        (h.priced_at === "reference" ? "var(--accent-gold)" : "var(--ink-muted)");
+      tag.textContent = h.priced_at === "reference" ? "variant-priced" : "family-priced";
+      tdRef.appendChild(tag);
+    }
+    const tdDate = document.createElement("td");
+    tdDate.textContent = h.purchase_date || "—";
+    const tdPaid = document.createElement("td");
+    tdPaid.className = "num";
+    tdPaid.textContent = h.purchase_price_usd != null ? fmtUSD(h.purchase_price_usd) : "—";
+    const tdVal = document.createElement("td");
+    tdVal.className = "num";
+    const valStrong = document.createElement("strong");
+    valStrong.textContent = h.current_value != null ? fmtUSD(h.current_value) : "unpriced";
+    tdVal.appendChild(valStrong);
+    const tdGain = document.createElement("td");
+    tdGain.className = "num";
+    if (h.gain_usd != null) {
+      const wrap = document.createElement("span");
+      wrap.className = "delta " + (h.gain_usd >= 0 ? "up" : "down");
+      wrap.textContent = (h.gain_usd >= 0 ? "+" : "−") + fmtUSD(Math.abs(h.gain_usd));
+      const pct = document.createElement("div");
+      pct.style.cssText = "font-size:11px;color:var(--ink-muted)";
+      pct.textContent = fmtPct(h.gain_pct);
+      tdGain.append(wrap, pct);
+    } else tdGain.textContent = "—";
+
+    const tdDel = document.createElement("td");
+    tdDel.className = "num";
+    const del = document.createElement("button");
+    del.className = "btn danger-ghost";
+    del.textContent = "✕";
+    del.title = "Remove";
+    del.addEventListener("click", async () => {
+      await fetch("/api/portfolio/holdings/" + h.id, { method: "DELETE" });
+      load();
+    });
+    tdDel.appendChild(del);
+
+    tr.append(tdName, tdRef, tdDate, tdPaid, tdVal, tdGain, tdDel);
+    tbody.appendChild(tr);
+  }
+}
+
+document.getElementById("add-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const opt = familySel.selectedOptions[0];
+  const body = {
+    brand: opt.dataset.brand,
+    family: familySel.value,
+    reference_number: refSel.value || null,
+    nickname: document.getElementById("a-nickname").value || null,
+    purchase_price_usd: parseFloat(document.getElementById("a-price").value) || null,
+    purchase_date: document.getElementById("a-date").value || null,
+  };
+  const resp = await fetch("/api/portfolio/holdings", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (resp.ok) {
+    ev.target.reset();
+    populateRefs();
+    load();
+  }
+});
+
+load();
+</script>
+{% endblock %}
