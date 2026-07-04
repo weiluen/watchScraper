@@ -71,6 +71,14 @@
     <div class="row cols-3" id="specs-row"></div>
   </div>
 
+  <div class="card" id="rankings-card" style="display:none">
+    <div class="card-head">
+      <h2>Rankings</h2>
+      <span class="hint">how this watch ranks among its peers on each metric</span>
+    </div>
+    <div class="row cols-2" id="rankings-row"></div>
+  </div>
+
   <div class="card" id="variants-card" style="display:none">
     <div class="card-head">
       <h2>Every variant of this reference</h2>
@@ -214,9 +222,15 @@ if (v && v.series.length >= 2) {
   }
 }
 series.push({
-  name: "Sales", color: "#199e70", dots: true,
+  name: "Sold", color: "#e34948", dots: true,
   points: d.sales_points.map((p) => ({ date: p.date, value: p.value })),
 });
+if (d.active_listings_scatter && d.active_listings_scatter.length) {
+  series.push({
+    name: "Listed (asking)", color: "#3987e5", dots: true,
+    points: d.active_listings_scatter.filter(p => p.date).map((p) => ({ date: p.date, value: p.value })),
+  });
+}
 lineChart(document.getElementById("sales-chart"), { series, bands, height: 300, yPrefix: "$" });
 
 // WatchCharts-style market metrics
@@ -285,6 +299,35 @@ if (mx) {
       ctx.textContent = fmtUSD(d.valuation.value * (1 + mx.forecast_1y[key]/100), true) + " in 1y";
       t.append(l, v, ctx);
       fr.appendChild(t);
+    }
+  }
+}
+
+// Rankings (peer percentiles vs brand and collection)
+if (d.rankings && (d.rankings.vs_brand || d.rankings.vs_collection)) {
+  const anyRanks = ["vs_brand","vs_collection"].some(k => d.rankings[k] && Object.keys(d.rankings[k].ranks || {}).length);
+  if (anyRanks) {
+    document.getElementById("rankings-card").style.display = "";
+    const row = document.getElementById("rankings-row");
+    const LABELS = { market_volatility: "Market volatility", value_retention: "Value retention", risk_score: "Risk score", sales_volume: "1Y sales volume" };
+    for (const key of ["vs_brand", "vs_collection"]) {
+      const grp = d.rankings[key];
+      if (!grp || !Object.keys(grp.ranks || {}).length) continue;
+      const col = document.createElement("div");
+      const h = document.createElement("div");
+      h.style.cssText = "color:var(--ink-muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px";
+      h.textContent = "versus " + grp.label;
+      col.appendChild(h);
+      for (const [metric, rank] of Object.entries(grp.ranks)) {
+        const r = document.createElement("div");
+        r.style.cssText = "display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--grid)";
+        const n = document.createElement("span"); n.style.color = "var(--ink-2)"; n.textContent = LABELS[metric] || metric;
+        const v2 = document.createElement("strong");
+        v2.className = rank.startsWith("Top") ? "delta up" : "delta down";
+        v2.textContent = rank;
+        r.append(n, v2); col.appendChild(r);
+      }
+      row.appendChild(col);
     }
   }
 }

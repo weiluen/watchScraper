@@ -755,7 +755,70 @@ def ref_detail_payload(snapshot: MarketSnapshot, slug: str) -> dict | None:
     payload["siblings"] = [
         _ref_value_row(snapshot, s) for _, s in siblings.head(10).iterrows()
     ]
+
+    # Peer-percentile rankings vs all-brand and all-collection (P3-12)
+    payload["rankings"] = _ref_rankings(snapshot, brand, ref, dial, family)
+
+    # Active (asking) listings = the "unsold" side of the scatter (P3-8)
+    payload["active_listings_scatter"] = _active_scatter(snapshot, brand, ref, dial)
+
     return payload
+
+
+def _ref_rankings(snapshot, brand, ref, dial, family) -> dict:
+    """Percentile of this watch's metrics within brand and collection peers."""
+    from watchscraper.metrics import compute_metrics, peer_rankings
+
+    refs = refs_payload(snapshot)
+    metrics_by_key: dict[str, object] = {}
+    this_key = None
+    for r in refs:
+        node = snapshot.valuation.node_row(r["brand"], r["ref"], r["dial_variant"], r["family"])
+        fam_model = snapshot.valuation.families.get(r["family"])
+        if node is None or fam_model is None:
+            continue
+        wm = compute_metrics(node, fam_model, retail_usd=r["retail_usd"], sold_dates=None)
+        wm.sales_1y = r["n_sold"]
+        metrics_by_key[r["slug"]] = wm
+        if r["ref"] == ref and (r["dial_variant"] or None) == (dial or None) and r["brand"] == brand:
+            this_key = r["slug"]
+    if this_key is None:
+        return {}
+    brand_keys = [r["slug"] for r in refs if r["brand"] == brand and r["slug"] in metrics_by_key]
+    fam_keys = [r["slug"] for r in refs if r["family"] == family and r["slug"] in metrics_by_key]
+    return {
+        "vs_brand": {"label": f"All {brand}",
+                     "ranks": peer_rankings(this_key, metrics_by_key, brand_keys)},
+        "vs_collection": {"label": f"All {brand} {family}",
+                          "ranks": peer_rankings(this_key, metrics_by_key, fam_keys)},
+    }
+
+
+def _active_scatter(snapshot, brand, ref, dial) -> list[dict]:
+    """Currently-active asking listings for this watch (the unsold points)."""
+    from watchscraper.database import get_session
+    from watchscraper.models import ActiveListing, Watch, Brand
+
+    session = get_session()
+    try:
+        q = (
+            session.query(ActiveListing.ask_price_usd, ActiveListing.first_seen)
+            .join(Watch, Watch.id == ActiveListing.watch_id)
+            .join(Brand, Brand.id == Watch.brand_id)
+            .filter(Brand.name == brand, Watch.reference_number == ref,
+                    ActiveListing.delisted_at.is_(None))
+        )
+        if dial:
+            q = q.filter(Watch.dial_variant == dial)
+        else:
+            q = q.filter(Watch.dial_variant.is_(None))
+        return [
+            {"date": fs.strftime("%Y-%m-%d") if fs else None,
+             "value": _clean_float(price / 100.0)}
+            for price, fs in q.limit(200).all() if price
+        ]
+    finally:
+        session.close()
 
 
 def overview_payload(snapshot: MarketSnapshot) -> dict:
