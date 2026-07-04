@@ -28,6 +28,11 @@ class HoldingValuation:
     series: list[dict]  # weekly {date, value}
 
 
+_CONDITION_MULT = {
+    "new": 1.04, "unworn": 1.04, "excellent": 1.015, "good": 1.0, "fair": 0.92,
+}
+
+
 def _json_float(v) -> float | None:
     if v is None:
         return None
@@ -99,6 +104,21 @@ def value_holdings(
                 series = pd.Series([ref_val])  # value known, no trend series
                 priced_at = "reference"
 
+        # Condition + completeness hedonic adjustment on the mark (the model
+        # values at full-set/good; a holding's own state moves its value).
+        cond_m = _CONDITION_MULT.get(h.get("condition") or "good", 1.0)
+        fs = valuation.hedonics.get("full_set", 0.12) if valuation is not None else 0.12
+        watch_only = 1.0 / np.exp(fs)
+        cont_m = {
+            "full_set": 1.0,
+            "with_papers": 1.0 - (1.0 - watch_only) * 0.4,
+            "with_box": 1.0 - (1.0 - watch_only) * 0.6,
+            "watch_only": watch_only,
+        }.get(h.get("contents") or "full_set", 1.0)
+        adj = cond_m * cont_m
+        if len(series):
+            series = series * adj
+
         current = _json_float(series.iloc[-1]) if len(series) else None
         purchase = _json_float(h.get("purchase_price_usd"))
         gain = gain_pct = None
@@ -113,6 +133,8 @@ def value_holdings(
                 "family": family,
                 "reference_number": h.get("reference_number"),
                 "dial_variant": h.get("dial_variant"),
+                "condition": h.get("condition"),
+                "contents": h.get("contents"),
                 "purchase_price_usd": purchase,
                 "purchase_date": (
                     h["purchase_date"].isoformat() if h.get("purchase_date") else None

@@ -84,3 +84,29 @@ class TestReferenceValuation:
             ref_values=make_ref_values(),
         )
         assert out["totals"]["value"] == 17_250.0 + 11_500.0
+
+
+class TestConditionAdjustment:
+    """Holdings marked for their condition and completeness (P14)."""
+
+    def _weekly(self):
+        weeks = pd.date_range("2026-04-06", periods=4, freq="W-MON")
+        return pd.DataFrame([
+            {"brand": "Rolex", "family": "Submariner", "price_type": "sold",
+             "week": w, "median": 11_000.0, "n": 10} for w in weeks
+        ])
+
+    def test_new_watch_only_moves_value(self):
+        from watchscraper.web.portfolio import value_holdings
+
+        rv = pd.DataFrame([{"brand": "Rolex", "ref": "126610LN", "family": "Submariner",
+                            "median_usd": 11_000.0}])
+        base = value_holdings(
+            [holding(reference_number="126610LN", condition="good", contents="full_set")],
+            self._weekly(), ref_values=rv)["holdings"][0]["current_value"]
+        adjusted = value_holdings(
+            [holding(reference_number="126610LN", condition="new", contents="watch_only")],
+            self._weekly(), ref_values=rv)["holdings"][0]["current_value"]
+        # new (+) but watch-only (−); watch-only dominates → net below base
+        assert adjusted is not None and base is not None
+        assert adjusted < base

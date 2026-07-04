@@ -312,13 +312,20 @@ class HoldingIn(BaseModel):
     purchase_price_usd: float | None = Field(default=None, gt=0)
     purchase_date: date | None = None
     condition: str | None = Field(default=None, max_length=20)
+    contents: str | None = Field(default=None, max_length=20)
+    is_wishlist: bool = False
     notes: str | None = None
 
 
-def _holding_dicts() -> list[dict]:
+def _holding_dicts(wishlist: bool = False) -> list[dict]:
     session = get_session()
     try:
-        rows = session.query(PortfolioHolding).order_by(PortfolioHolding.id).all()
+        rows = (
+            session.query(PortfolioHolding)
+            .filter(PortfolioHolding.is_wishlist == wishlist)
+            .order_by(PortfolioHolding.id)
+            .all()
+        )
         return [
             {
                 "id": r.id,
@@ -330,6 +337,7 @@ def _holding_dicts() -> list[dict]:
                 "purchase_price_usd": r.purchase_price_usd,
                 "purchase_date": r.purchase_date,
                 "condition": r.condition,
+                "contents": r.contents,
                 "notes": r.notes,
             }
             for r in rows
@@ -339,13 +347,42 @@ def _holding_dicts() -> list[dict]:
 
 
 @app.get("/api/portfolio")
-def api_portfolio():
+def api_portfolio(wishlist: bool = False):
     snapshot = services.get_market()
     return portfolio_svc.value_holdings(
-        _holding_dicts(),
+        _holding_dicts(wishlist),
         snapshot.dom_weekly,
         ref_values=snapshot.ref_values,
         valuation=snapshot.valuation,
+    )
+
+
+@app.get("/api/portfolio/export.csv")
+def api_portfolio_csv(wishlist: bool = False):
+    import csv
+    import io
+
+    from fastapi.responses import StreamingResponse
+
+    snapshot = services.get_market()
+    p = portfolio_svc.value_holdings(
+        _holding_dicts(wishlist), snapshot.dom_weekly,
+        ref_values=snapshot.ref_values, valuation=snapshot.valuation,
+    )
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["brand", "family", "reference", "dial", "condition", "contents",
+                "purchase_price", "purchase_date", "market_value", "gain_usd", "gain_pct"])
+    for h in p["holdings"]:
+        w.writerow([h["brand"], h["family"], h.get("reference_number") or "",
+                    h.get("dial_variant") or "", h.get("condition") or "",
+                    h.get("contents") or "", h.get("purchase_price_usd") or "",
+                    h.get("purchase_date") or "", h.get("current_value") or "",
+                    h.get("gain_usd") or "", h.get("gain_pct") or ""])
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]), media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=collection.csv"},
     )
 
 
@@ -372,6 +409,65 @@ def api_delete_holding(holding_id: int):
         row = session.get(PortfolioHolding, holding_id)
         if row is None:
             raise HTTPException(404, "Holding not found")
+        session.delete(row)
+        session.commit()
+    finally:
+        session.close()
+
+
+# ── Price alerts (P14) ──────────────────────────────────────────────────────
+
+
+class AlertIn(BaseModel):
+    brand: str = Field(min_length=1, max_length=100)
+    family: str = Field(min_length=1, max_length=100)
+    reference_number: str | None = Field(default=None, max_length=50)
+    dial_variant: str | None = Field(default=None, max_length=50)
+    threshold_usd: float = Field(gt=0)
+    direction: str = Field(pattern="^(above|below)$")
+    email: str | None = Field(default=None, max_length=200)
+
+
+@app.get("/api/alerts")
+def api_alerts():
+    from watchscraper.models import PriceAlert
+
+    session = get_session()
+    try:
+        rows = session.query(PriceAlert).order_by(PriceAlert.id).all()
+        return {"alerts": [
+            {"id": r.id, "brand": r.brand, "family": r.family,
+             "reference_number": r.reference_number, "dial_variant": r.dial_variant,
+             "threshold_usd": r.threshold_usd, "direction": r.direction}
+            for r in rows
+        ]}
+    finally:
+        session.close()
+
+
+@app.post("/api/alerts", status_code=201)
+def api_add_alert(alert: AlertIn):
+    from watchscraper.models import PriceAlert
+
+    session = get_session()
+    try:
+        row = PriceAlert(**alert.model_dump())
+        session.add(row)
+        session.commit()
+        return {"id": row.id}
+    finally:
+        session.close()
+
+
+@app.delete("/api/alerts/{alert_id}", status_code=204)
+def api_delete_alert(alert_id: int):
+    from watchscraper.models import PriceAlert
+
+    session = get_session()
+    try:
+        row = session.get(PriceAlert, alert_id)
+        if row is None:
+            raise HTTPException(404, "Alert not found")
         session.delete(row)
         session.commit()
     finally:

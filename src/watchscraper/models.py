@@ -228,7 +228,27 @@ class PortfolioHolding(Base):
     purchase_price_usd: Mapped[float | None] = mapped_column(Float)
     purchase_date: Mapped[date | None] = mapped_column(Date)
     condition: Mapped[str | None] = mapped_column(String(20))
+    contents: Mapped[str | None] = mapped_column(String(20))
+    is_wishlist: Mapped[bool] = mapped_column(Boolean, default=False)
     notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class PriceAlert(Base):
+    """A user's price alert for a watch: notify when value crosses threshold."""
+
+    __tablename__ = "price_alerts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    brand: Mapped[str] = mapped_column(String(100), nullable=False)
+    family: Mapped[str] = mapped_column(String(100), nullable=False)
+    reference_number: Mapped[str | None] = mapped_column(String(50))
+    dial_variant: Mapped[str | None] = mapped_column(String(50))
+    threshold_usd: Mapped[float] = mapped_column(Float, nullable=False)
+    direction: Mapped[str] = mapped_column(String(5), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

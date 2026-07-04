@@ -1,8 +1,13 @@
 {% extends "base.html" %}
 {% block title %}My collection{% endblock %}
 {% block content %}
-  <h1>My collection</h1>
-  <p class="subtitle">Your watches, marked to market weekly at their family's median sold price.</p>
+  <div style="display:flex;align-items:center;justify-content:space-between">
+    <div>
+      <h1>My collection</h1>
+      <p class="subtitle">Your watches, marked to each variant's modeled value and adjusted for its condition and completeness.</p>
+    </div>
+    <a class="btn" href="/api/portfolio/export.csv" download>↓ Download CSV</a>
+  </div>
 
   <div class="row cols-4">
     <div class="card stat-tile">
@@ -60,6 +65,14 @@
       <div>
         <label for="a-nickname">Nickname (optional)</label>
         <input type="text" id="a-nickname" placeholder="Birthday Sub">
+      </div>
+      <div>
+        <label for="a-condition">Condition</label>
+        <select id="a-condition"><option value="new">New / unworn</option><option value="excellent">Excellent</option><option value="good" selected>Good</option><option value="fair">Fair</option></select>
+      </div>
+      <div>
+        <label for="a-contents">Delivery contents</label>
+        <select id="a-contents"><option value="full_set" selected>Full set</option><option value="with_papers">With papers</option><option value="with_box">With box</option><option value="watch_only">Watch only</option></select>
       </div>
       <div>
         <label for="a-price">Purchase price USD (optional)</label>
@@ -246,6 +259,8 @@ document.getElementById("add-form").addEventListener("submit", async (ev) => {
     reference_number: (refOpt && refOpt.dataset.ref) || null,
     dial_variant: (refOpt && refOpt.dataset.dial) || null,
     nickname: document.getElementById("a-nickname").value || null,
+    condition: document.getElementById("a-condition").value,
+    contents: document.getElementById("a-contents").value,
     purchase_price_usd: parseFloat(document.getElementById("a-price").value) || null,
     purchase_date: document.getElementById("a-date").value || null,
   };
