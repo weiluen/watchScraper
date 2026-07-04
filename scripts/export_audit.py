@@ -231,10 +231,46 @@ def main() -> None:
     ).sort_values(["matched_brand", "matched_ref", "matched_dial", "event_date"])
 
     OUT_DIR.mkdir(exist_ok=True)
+    # ── Granularity audit: what the data says about the right atom ──────
+    from watchscraper.catalog import REF_VARIANTS
+    from watchscraper.taxonomy import (
+        analyze_reference_granularity,
+        reconcile_with_catalog,
+    )
+
+    findings = analyze_reference_granularity(clean_sold)
+    gran_rows = [
+        {
+            "brand": f.brand,
+            "reference": f.reference,
+            "attribute": f.attribute,
+            "recommend_split": f.recommend_split,
+            "spread_pct": round((f.spread_ratio - 1) * 100, 1),
+            "p_value": f.p_value,
+            "n_total": f.n_total,
+            "groups": " | ".join(
+                f"{g['value']} ${g['median']:,.0f} (n={g['n']})" for g in f.groups
+            ),
+            "reason": f.reason,
+        }
+        for f in findings
+    ]
+    gran_df = pd.DataFrame(gran_rows)
+
+    # Size-split family atoms (adaptive granularity in action)
+    size_atoms = model.nodes[
+        (model.nodes["node_type"] == "family_material")
+        & model.nodes["size_band"].notna()
+    ][["family", "material", "size_band", "n", "value"]].sort_values(
+        ["family", "material", "value"], ascending=[True, True, False]
+    )
+
     watches_df.to_csv(OUT_DIR / "audit_watches.csv", index=False)
     evidence.to_csv(OUT_DIR / "audit_evidence.csv", index=False)
     internals_df.to_csv(OUT_DIR / "audit_internals.csv", index=False)
     sales.to_csv(OUT_DIR / "audit_sales.csv", index=False)
+    gran_df.to_csv(OUT_DIR / "audit_granularity.csv", index=False)
+    size_atoms.to_csv(OUT_DIR / "audit_size_atoms.csv", index=False)
 
     # Excel workbook: same data as sheets ("subsequent pages")
     try:

@@ -204,21 +204,61 @@ class ValuationModel:
 # ── Estimation ────────────────────────────────────────────────────────────
 
 
-def _node_key(row) -> tuple:
-    """(node_type, brand, ref, dial, family, material) identity of a sale."""
+MIN_SIZE_SPLIT = 15  # a size band becomes its own atom only if this dense
+
+
+def _size_band(size_mm) -> str | None:
+    """Coarse case-size bands. Ladies'/mid/full trade as distinct markets;
+    the band is only used to split a family-generic atom where dense."""
+    if size_mm is None or (isinstance(size_mm, float) and np.isnan(size_mm)):
+        return None
+    s = float(size_mm)
+    if s < 34:
+        return "sub34"
+    if s < 38:
+        return "34-37"
+    if s < 42:
+        return "38-41"
+    return "42+"
+
+
+def _row_size(row) -> float | None:
+    for col in ("parsed_size", "linked_size_mm"):
+        v = row.get(col)
+        if v is not None and not (isinstance(v, float) and np.isnan(v)):
+            return v
+    return None
+
+
+def _node_key(row, dense_size_cells: set | None = None) -> tuple:
+    """(node_type, brand, ref, dial, family, material, size_band) identity.
+
+    The pricing atom. Matched watches key on reference (+dial variant);
+    material and size are fixed by the reference so they are not split
+    dimensions there. Unmatched (family-generic) atoms key on
+    (family, material, size-band) — material is the dominant price driver
+    and size a secondary one, but size only splits the atom where the
+    (family, material, band) cell is dense enough to estimate; otherwise it
+    folds back to (family, material). This is the adaptive-granularity rule.
+    """
     conf = row.get("match_confidence") or 0
     if isinstance(row.get("linked_ref"), str) and conf >= 0.65:
         dial = row.get("linked_dial")
         dial = dial if isinstance(dial, str) else None
         if dial:
             return ("variant", row["linked_brand"], row["linked_ref"], dial,
-                    row["family"], row["material"])
-        # Parent bucket of a multi-dial ref is NOT a sellable identity —
-        # let those observations inform the trend only, via a ref node.
+                    row["family"], row["material"], "")
         return ("ref", row["linked_brand"], row["linked_ref"], None,
-                row["family"], row["material"])
+                row["family"], row["material"], "")
+
+    band = _size_band(_row_size(row))
+    if dense_size_cells is not None and band is not None:
+        cell = (row["family"], row["material"], band)
+        band = band if cell in dense_size_cells else ""
+    else:
+        band = band or ""
     return ("family_material", row.get("brand"), None, None,
-            row["family"], row["material"])
+            row["family"], row["material"], band)
 
 
 def _estimate_hedonics(df: pd.DataFrame) -> dict[str, float]:
@@ -266,8 +306,9 @@ def build_valuation(clean_sold: pd.DataFrame) -> ValuationModel:
 
     df["log_price"] = np.log(df["price"])
     df["full_set"] = df["title"].map(parse_full_set)
-    df["bracelet"] = df.get("parsed_attributes", pd.Series(index=df.index)).map(
-        lambda a: a.get("bracelet") if isinstance(a, dict) else None
+    df["bracelet"] = (
+        df["parsed_bracelet"] if "parsed_bracelet" in df.columns
+        else pd.Series([None] * len(df), index=df.index)
     )
     df["t_days"] = (
         df["event_date"].dt.tz_convert("UTC").dt.tz_localize(None)
@@ -285,7 +326,20 @@ def build_valuation(clean_sold: pd.DataFrame) -> ValuationModel:
             b = name.split("_", 1)[1]
             df.loc[df["bracelet"] == b, "y"] -= premium
 
-    df["node"] = df.apply(_node_key, axis=1)
+    # Adaptive size splitting: a (family, material, size-band) cell earns its
+    # own atom only when dense; otherwise size folds into the material atom.
+    fam_level = df[~(df["linked_ref"].notna() & (df["match_confidence"].fillna(0) >= 0.65))].copy()
+    if not fam_level.empty:
+        fam_level["_band"] = fam_level.apply(lambda r: _size_band(_row_size(r)), axis=1)
+        cell_counts = (
+            fam_level.dropna(subset=["_band"])
+            .groupby(["family", "material", "_band"]).size()
+        )
+        dense_size_cells = {idx for idx, n in cell_counts.items() if n >= MIN_SIZE_SPLIT}
+    else:
+        dense_size_cells = set()
+
+    df["node"] = df.apply(lambda r: _node_key(r, dense_size_cells), axis=1)
 
     families: dict[str, FamilyModel] = {}
     node_rows: list[dict] = []
@@ -343,25 +397,32 @@ def build_valuation(clean_sold: pd.DataFrame) -> ValuationModel:
         trend_at_obs = np.interp(t, grid_t, trend)
         resid_all = y - trend_at_obs
 
-        ref_anchor: dict[tuple, float] = {}
-        ref_group_n: dict[tuple, int] = {}
+        # Anchors for hierarchical shrinkage: a dial variant shrinks toward
+        # its reference's level; a size sub-atom shrinks toward its
+        # (family, material) parent.
+        ref_anchor: dict[tuple, list] = {}
+        mat_anchor: dict[tuple, list] = {}
         for node, pos in node_groups.items():
-            _, brand_key, ref_key = node[0], node[1], node[2]
+            node_type_key, brand_key, ref_key = node[0], node[1], node[2]
+            fam_key, mat_key = node[4], node[5]
             if ref_key:
-                key = (brand_key, ref_key)
-                ref_anchor.setdefault(key, [])
-                ref_anchor[key] = ref_anchor[key] + list(resid_all[pos])
-        ref_anchor = {
-            k: float(np.median(v)) for k, v in ref_anchor.items() if v
-        }
+                ref_anchor.setdefault((brand_key, ref_key), []).extend(resid_all[pos])
+            if node_type_key == "family_material":
+                mat_anchor.setdefault((fam_key, mat_key), []).extend(resid_all[pos])
+        ref_anchor = {k: float(np.median(v)) for k, v in ref_anchor.items() if v}
+        mat_anchor = {k: float(np.median(v)) for k, v in mat_anchor.items() if v}
 
         report_offsets = {}
         for node, pos in node_groups.items():
             node_type_key, brand_key, ref_key = node[0], node[1], node[2]
+            fam_key, mat_key, band_key = node[4], node[5], node[6]
             node_med = float(np.median(resid_all[pos]))
             kappa = len(pos) / (len(pos) + OFFSET_SHRINK_K)
             if node_type_key == "variant" and (brand_key, ref_key) in ref_anchor:
                 anchor = ref_anchor[(brand_key, ref_key)]
+                report_offsets[node] = anchor + kappa * (node_med - anchor)
+            elif node_type_key == "family_material" and band_key and (fam_key, mat_key) in mat_anchor:
+                anchor = mat_anchor[(fam_key, mat_key)]
                 report_offsets[node] = anchor + kappa * (node_med - anchor)
             else:
                 report_offsets[node] = kappa * node_med
@@ -390,7 +451,7 @@ def build_valuation(clean_sold: pd.DataFrame) -> ValuationModel:
         chg1, chg3 = _chg(4), _chg(12)
 
         for node, grp in fam_df.groupby("node"):
-            node_type, brand, ref, dial, fam_name, material = node
+            node_type, brand, ref, dial, fam_name, material, size_band = node
             n = len(grp)
             offset = report_offsets[node]
             offset_se = sigma / np.sqrt(n) if n else sigma
@@ -403,6 +464,7 @@ def build_valuation(clean_sold: pd.DataFrame) -> ValuationModel:
                     "dial_variant": dial,
                     "family": fam_name,
                     "material": material,
+                    "size_band": size_band or None,
                     "n": n,
                     "offset": offset,
                     "offset_se": offset_se,
