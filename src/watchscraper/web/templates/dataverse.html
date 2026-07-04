@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Dataverse{% endblock %}
+{% block content %}
+  <h1>Dataverse</h1>
+  <p class="subtitle">The whole market in one table — every priced reference with its value, trend, risk, and specs. Sort any column; filter to what you care about.</p>
+
+  <div class="filter-row">
+    <input type="search" id="f-q" placeholder="Filter reference, nickname, brand…">
+    <select id="f-brand"><option value="">All brands</option></select>
+    <select id="f-style"><option value="">All styles</option></select>
+    <select id="f-material"><option value="">All materials</option></select>
+  </div>
+
+  <div class="card" style="overflow-x:auto">
+    <table class="data" id="dv">
+      <thead><tr>
+        <th data-k="brand">Brand</th><th data-k="display_ref">Reference</th><th data-k="family">Collection</th>
+        <th data-k="style">Style</th><th data-k="case_material">Material</th><th data-k="case_size_mm" class="num">Size</th>
+        <th data-k="median_usd" class="num">Market value</th><th data-k="chg_1m_pct" class="num">1m trend</th>
+        <th data-k="premium_pct" class="num">vs retail</th><th data-k="n_sold" class="num">Sales</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <p class="footnote" id="count"></p>
+  </div>
+{% endblock %}
+{% block scripts %}
+<script type="module">
+import { fmtUSD, fmtPct } from "/static/charts.js?v=2";
+const { refs } = await (await fetch("/api/refs")).json();
+const brandSel = document.getElementById("f-brand"), styleSel = document.getElementById("f-style"), matSel = document.getElementById("f-material");
+for (const v of [...new Set(refs.map(r=>r.brand))].sort()) { const o=document.createElement("option");o.value=v;o.textContent=v;brandSel.appendChild(o); }
+for (const v of [...new Set(refs.map(r=>r.style).filter(Boolean))].sort()) { const o=document.createElement("option");o.value=v;o.textContent=v;styleSel.appendChild(o); }
+for (const v of [...new Set(refs.map(r=>r.case_material).filter(Boolean))].sort()) { const o=document.createElement("option");o.value=v;o.textContent=v;matSel.appendChild(o); }
+
+let sortK = "median_usd", sortDir = -1;
+const state = { q:"", brand:"", style:"", material:"" };
+function render() {
+  let rows = refs.filter(r =>
+    (!state.brand || r.brand===state.brand) && (!state.style || r.style===state.style) &&
+    (!state.material || r.case_material===state.material) &&
+    (!state.q || (r.brand+" "+r.display_ref+" "+(r.family||"")+" "+(r.nicknames||[]).join(" ")).toLowerCase().includes(state.q)));
+  rows.sort((a,b) => { const x=a[sortK]??-1e12, y=b[sortK]??-1e12; return typeof x==="string" ? sortDir*x.localeCompare(y) : sortDir*(y-x)*-1; });
+  const tb = document.getElementById("rows"); tb.textContent = "";
+  rows.slice(0, 400).forEach(r => {
+    const tr = document.createElement("tr"); tr.style.cursor="pointer";
+    tr.addEventListener("click", ()=>location.href="/refs/"+r.slug);
+    const td=(t,num,cls)=>{const el=document.createElement("td");if(num)el.className="num";if(cls){const s=document.createElement("span");s.className=cls;s.textContent=t;el.appendChild(s);}else el.textContent=t;return el;};
+    tr.append(
+      td(r.brand), td(r.display_ref), td(r.family||"—"), td(r.style||"—"), td(r.case_material||"—"),
+      td(r.case_size_mm?r.case_size_mm.toFixed(0)+"mm":"—", true),
+      td(fmtUSD(r.median_usd), true),
+      r.chg_1m_pct!=null?td(fmtPct(r.chg_1m_pct),true,"delta "+(r.chg_1m_pct>0?"up":"down")):td("—",true),
+      r.premium_pct!=null?td(fmtPct(r.premium_pct),true,"delta "+(r.premium_pct>=0?"up":"down")):td("—",true),
+      td(String(r.n_sold), true),
+    );
+    tb.appendChild(tr);
+  });
+  document.getElementById("count").textContent = "Showing " + Math.min(rows.length,400) + " of " + rows.length + " references";
+}
+document.querySelectorAll("#dv th").forEach(th => th.addEventListener("click", () => {
+  const k = th.dataset.k; if (sortK===k) sortDir*=-1; else { sortK=k; sortDir=-1; } render();
+}));
+document.getElementById("f-q").addEventListener("input", e=>{state.q=e.target.value.toLowerCase();render();});
+brandSel.addEventListener("change", e=>{state.brand=e.target.value;render();});
+styleSel.addEventListener("change", e=>{state.style=e.target.value;render();});
+matSel.addEventListener("change", e=>{state.material=e.target.value;render();});
+render();
+</script>
+{% endblock %}

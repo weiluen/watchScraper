@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Brands{% endblock %}
+{% block content %}
+  <h1>Browse by brand</h1>
+  <p class="subtitle">Every tracked brand, with its reference count and market activity.</p>
+  <div class="index-grid" id="grid"></div>
+{% endblock %}
+{% block scripts %}
+<script type="module">
+import { fmtUSD } from "/static/charts.js?v=2";
+const { brands } = await (await fetch("/api/brands")).json();
+const grid = document.getElementById("grid");
+for (const b of brands) {
+  const a = document.createElement("a"); a.className = "index-card"; a.href = "/brands/" + b.slug;
+  const n = document.createElement("div"); n.className = "ix-name"; n.textContent = b.brand;
+  const l = document.createElement("div"); l.className = "ix-level"; l.style.fontSize = "18px"; l.textContent = b.n_refs + " references";
+  const m = document.createElement("div"); m.className = "ix-meta"; m.textContent = "median " + fmtUSD(b.median_value, true) + " · " + b.total_sales.toLocaleString() + " sales";
+  a.append(n, l, m); grid.appendChild(a);
+}
+</script>
+{% endblock %}

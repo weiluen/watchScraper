@@ -482,17 +482,25 @@ def build_valuation(clean_sold: pd.DataFrame) -> ValuationModel:
     return ValuationModel(hedonics=hedonics, families=families, nodes=nodes)
 
 
-def market_index_from_trends(model: ValuationModel) -> pd.Series:
+def market_index_from_trends(
+    model: ValuationModel,
+    families: set[str] | None = None,
+    min_obs: int = 30,
+) -> pd.Series:
     """Smooth market index: median family trend, rebased to 100.
 
     Every family trend is composition- and configuration-adjusted by
     construction, so this cannot register mix shifts as price moves.
+    Pass `families` to build a sub-index (brand / style / price-range) over
+    just those constituents.
     """
     if not model.families:
         return pd.Series(dtype=float)
     frames, weights = [], []
     for fam in model.families.values():
-        if fam.n_obs >= 30:
+        if families is not None and fam.family not in families:
+            continue
+        if fam.n_obs >= min_obs:
             frames.append(pd.Series(fam.trend, index=fam.grid, name=fam.family))
             weights.append(np.sqrt(fam.n_obs))
     if not frames:

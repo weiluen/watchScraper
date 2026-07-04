@@ -855,3 +855,124 @@ def buying_guide_payload(snapshot: MarketSnapshot) -> list[dict]:
         )
     rows.sort(key=lambda x: (x["score"], -(x["round_trip_pct"] or 99)), reverse=True)
     return rows
+
+
+# ── Appraisal (P12) ─────────────────────────────────────────────────────────
+
+# Condition multipliers relative to the "good" reference the model values at.
+# Grounded in typical secondary-market spreads; new/unworn matches the ~+4%
+# WatchCharts shows.
+CONDITION_MULT = {
+    "new": 1.04,
+    "unworn": 1.04,
+    "excellent": 1.015,
+    "good": 1.0,
+    "fair": 0.92,
+}
+
+
+def _contents_mults(snapshot: MarketSnapshot) -> dict[str, float]:
+    """Completeness multipliers. The model values at 'full set'; a naked head
+    is discounted by the full-set hedonic, box/papers-partial interpolated."""
+    fs = snapshot.valuation.hedonics.get("full_set", 0.10)  # log premium
+    watch_only = 1.0 / np.exp(fs)  # remove the full-set premium
+    return {
+        "full_set": 1.0,
+        "with_papers": 1.0 - (1.0 - watch_only) * 0.4,
+        "with_box": 1.0 - (1.0 - watch_only) * 0.6,
+        "watch_only": watch_only,
+    }
+
+
+def appraise(
+    snapshot: MarketSnapshot, slug: str, condition: str, contents: str
+) -> dict | None:
+    """Estimate a specific example's value: base × condition × completeness."""
+    row = snapshot.ref_row(slug)
+    if row is None:
+        return None
+    base = _ref_value_row(snapshot, row)
+    value = base["median_usd"]
+    if value is None:
+        return None
+    cond_m = CONDITION_MULT.get(condition, 1.0)
+    cont_m = _contents_mults(snapshot).get(contents, 1.0)
+    est = value * cond_m * cont_m
+    return {
+        "slug": slug,
+        "display_ref": base["display_ref"],
+        "brand": base["brand"],
+        "family": base["family"],
+        "base_value": value,
+        "condition": condition,
+        "contents": contents,
+        "condition_mult": round(cond_m, 4),
+        "contents_mult": round(cont_m, 4),
+        "estimate": round(est, 0),
+        "estimate_lo": round(est * 0.94, 0),
+        "estimate_hi": round(est * 1.06, 0),
+        "image": base["image"],
+    }
+
+
+# ── Brand pages (P5b) ───────────────────────────────────────────────────────
+
+
+def brands_payload(snapshot: MarketSnapshot) -> list[dict]:
+    """All brands with aggregate stats, for the brands index (P5a)."""
+    rows = refs_payload(snapshot)
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return []
+    out = []
+    for brand, grp in df.groupby("brand"):
+        out.append({
+            "brand": brand,
+            "slug": slugify(brand),
+            "n_refs": int(grp["ref"].nunique()),
+            "median_value": _clean_float(grp["median_usd"].median()),
+            "total_sales": int(grp["n_sold"].sum()),
+        })
+    out.sort(key=lambda x: -x["total_sales"])
+    return out
+
+
+def brand_detail_payload(snapshot: MarketSnapshot, slug: str) -> dict | None:
+    """One brand: index series, collections, top references (P5b)."""
+    from watchscraper.web import research
+
+    rows = refs_payload(snapshot)
+    brand_refs = [r for r in rows if slugify(r["brand"]) == slug]
+    if not brand_refs:
+        return None
+    brand = brand_refs[0]["brand"]
+
+    idx = research.index_detail(snapshot, slug)
+    fams = {}
+    for r in brand_refs:
+        fam = r["family"]
+        if fam is None:
+            continue
+        fams.setdefault(fam, {"family": fam, "family_slug": r["family_slug"],
+                              "n_refs": 0, "values": [], "image": r["image"]})
+        fams[fam]["n_refs"] += 1
+        if r["median_usd"]:
+            fams[fam]["values"].append(r["median_usd"])
+    collections = [
+        {"family": f["family"], "family_slug": f["family_slug"], "n_refs": f["n_refs"],
+         "median_value": _clean_float(float(np.median(f["values"])) if f["values"] else None),
+         "image": f["image"]}
+        for f in fams.values()
+    ]
+    collections.sort(key=lambda x: -(x["median_value"] or 0))
+
+    top = sorted(brand_refs, key=lambda x: -x["n_sold"])[:12]
+    return {
+        "brand": brand,
+        "slug": slug,
+        "index": idx,
+        "n_refs": len(brand_refs),
+        "median_value": _clean_float(float(np.median([r["median_usd"] for r in brand_refs if r["median_usd"]]))),
+        "collections": collections,
+        "top_refs": top,
+    }

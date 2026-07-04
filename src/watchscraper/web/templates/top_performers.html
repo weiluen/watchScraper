@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Top performers{% endblock %}
+{% block content %}
+  <h1>Top performers</h1>
+  <p class="subtitle">Screen references by market value and recent smoothed price movement. Find watches on the move — up or down.</p>
+
+  <div class="filter-row">
+    <select id="f-brand"><option value="">All brands</option></select>
+    <select id="f-price">
+      <option value="0">Any price</option>
+      <option value="1000">$1,000+</option>
+      <option value="5000">$5,000+</option>
+      <option value="15000">$15,000+</option>
+      <option value="40000">$40,000+</option>
+    </select>
+    <select id="f-sort">
+      <option value="trend_desc">Biggest gainers</option>
+      <option value="trend_asc">Biggest decliners</option>
+      <option value="price_desc">Price high → low</option>
+      <option value="price_asc">Price low → high</option>
+    </select>
+    <button class="btn primary" id="find">Find watches</button>
+  </div>
+
+  <div class="card">
+    <table class="data">
+      <thead><tr><th>#</th><th>Watch</th><th class="num">Market value</th><th class="num">Trend (1m, smoothed)</th><th class="num">Sales</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+{% endblock %}
+{% block scripts %}
+<script type="module">
+import { fmtUSD, fmtPct } from "/static/charts.js?v=2";
+const brandSel = document.getElementById("f-brand");
+const { brands } = await (await fetch("/api/market/brands")).json();
+for (const b of brands) { const o = document.createElement("option"); o.value = b; o.textContent = b; brandSel.appendChild(o); }
+
+async function run() {
+  const p = new URLSearchParams({
+    brand: brandSel.value, min_price: document.getElementById("f-price").value,
+    sort: document.getElementById("f-sort").value,
+  });
+  const { results } = await (await fetch("/api/market/top?" + p)).json();
+  const tb = document.getElementById("rows"); tb.textContent = "";
+  results.forEach((r, i) => {
+    const tr = document.createElement("tr"); tr.style.cursor = "pointer";
+    tr.addEventListener("click", () => location.href = "/refs/" + r.slug);
+    const cells = [String(i+1), r.brand + " " + r.display_ref, fmtUSD(r.median_usd), null, String(r.n_sold)];
+    cells.forEach((c, idx) => {
+      const td = document.createElement("td");
+      if (idx >= 2) td.className = "num";
+      if (idx === 3) {
+        const s = document.createElement("span");
+        s.className = "delta " + (r.chg_1m_pct > 0 ? "up" : r.chg_1m_pct < 0 ? "down" : "flat");
+        s.textContent = r.chg_1m_pct != null ? fmtPct(r.chg_1m_pct) : "—";
+        td.appendChild(s);
+      } else td.textContent = c;
+      tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  });
+}
+document.getElementById("find").addEventListener("click", run);
+["f-brand","f-price","f-sort"].forEach(id => document.getElementById(id).addEventListener("change", run));
+run();
+</script>
+{% endblock %}

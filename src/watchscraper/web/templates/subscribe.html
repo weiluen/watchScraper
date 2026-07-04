@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Premium{% endblock %}
+{% block content %}
+  <h1>Level up your watch game</h1>
+  <p class="subtitle">Full market history, price forecasts, data downloads, and the complete Dataverse. Cancel anytime.</p>
+
+  <div class="row cols-3" id="plans"></div>
+
+  <div class="card" style="margin-top:20px">
+    <div class="card-head"><h2>Compare features</h2></div>
+    <table class="data" id="matrix">
+      <thead><tr><th>Feature</th><th class="num">Basic</th><th class="num">Enthusiast</th><th class="num">Professional</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+{% endblock %}
+{% block scripts %}
+<script type="module">
+const plans = [
+  { name: "Basic", price: "$0", period: "free forever", cta: "Current plan", features: ["Current market prices", "1 year of price history", "Track your collection", "Dataverse preview"] },
+  { name: "Enthusiast", price: "$99", period: "per year", cta: "Choose Enthusiast", highlight: true, features: ["Everything in Basic", "Full price history", "Price forecasts", "Full Dataverse table", "Price alerts", "CSV downloads"] },
+  { name: "Professional", price: "$299", period: "per year", cta: "Choose Professional", features: ["Everything in Enthusiast", "Bulk CSV exports", "API access", "Priority data refresh", "Commercial use"] },
+];
+const wrap = document.getElementById("plans");
+for (const p of plans) {
+  const card = document.createElement("div"); card.className = "card";
+  if (p.highlight) card.style.borderColor = "var(--accent-gold)";
+  const n = document.createElement("h2"); n.textContent = p.name;
+  const pr = document.createElement("div"); pr.className = "value hero"; pr.style.fontSize = "40px"; pr.textContent = p.price;
+  const per = document.createElement("div"); per.className = "subtitle"; per.textContent = p.period;
+  const ul = document.createElement("div"); ul.style.margin = "12px 0";
+  p.features.forEach(f => { const li = document.createElement("div"); li.style.cssText="padding:5px 0;color:var(--ink-2);font-size:13px"; li.textContent = "✓ " + f; ul.appendChild(li); });
+  const btn = document.createElement("button"); btn.className = "btn " + (p.highlight ? "primary" : ""); btn.style.width = "100%"; btn.textContent = p.cta;
+  card.append(n, pr, per, ul, btn); wrap.appendChild(card);
+}
+const rows = [
+  ["Market prices", "✓","✓","✓"], ["Price history", "1 year","Full","Full"],
+  ["Price forecasts", "—","✓","✓"], ["Dataverse", "Preview","Full","Full"],
+  ["Price alerts", "—","✓","✓"], ["CSV export", "—","✓","Bulk"], ["API access", "—","—","✓"],
+];
+const tb = document.querySelector("#matrix tbody");
+rows.forEach(r => { const tr = document.createElement("tr"); r.forEach((c,i)=>{ const td=document.createElement("td"); if(i)td.className="num"; td.textContent=c; tr.appendChild(td); }); tb.appendChild(tr); });
+</script>
+{% endblock %}

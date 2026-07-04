@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Collecting idea{% endblock %}
+{% block content %}
+  <p class="subtitle" style="margin-bottom:0"><a href="/market/lists">← Collecting ideas</a></p>
+  <h1 id="title">List</h1>
+  <p class="subtitle" id="sub"></p>
+  <div class="watch-grid" id="grid"></div>
+{% endblock %}
+{% block scripts %}
+<script type="module">
+import { sparkline, fmtUSD, fmtPct } from "/static/charts.js?v=2";
+const d = await (await fetch("/api/lists/{{ slug }}")).json();
+document.getElementById("title").textContent = d.title;
+document.getElementById("sub").textContent = d.blurb + " — " + d.n + " matches. Rule: " + d.rule + ".";
+const grid = document.getElementById("grid");
+for (const r of d.results) {
+  const card = document.createElement("a"); card.className = "watch-card"; card.href = "/refs/" + r.slug;
+  if (r.image) { const img = document.createElement("img"); img.className = "photo"; img.src = r.image; img.loading = "lazy"; card.appendChild(img); }
+  const brand = document.createElement("div"); brand.className = "brand"; brand.textContent = r.brand + " · " + (r.family || "");
+  const fam = document.createElement("div"); fam.className = "family"; fam.textContent = r.display_ref;
+  const price = document.createElement("div"); price.className = "price"; price.textContent = fmtUSD(r.median_usd);
+  const meta = document.createElement("div"); meta.className = "meta";
+  const bits = [r.n_sold + " sales"];
+  if (r.chg_1m_pct != null) bits.push(fmtPct(r.chg_1m_pct) + " /1m");
+  if (r.premium_pct != null) bits.push(fmtPct(r.premium_pct) + " vs retail");
+  meta.textContent = bits.join(" · ");
+  card.append(brand, fam, price, meta); grid.appendChild(card);
+}
+</script>
+{% endblock %}

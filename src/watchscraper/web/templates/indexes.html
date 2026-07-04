@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Market indexes{% endblock %}
+{% block content %}
+  <h1>Market indexes</h1>
+  <p class="subtitle">Composition-adjusted price indexes: each chains volume-weighted median trend returns of its constituent watches, so a shift in what sells can't masquerade as a price move. Rebased to 100 at the window start.</p>
+
+  <div class="tab-strip" id="kind-tabs">
+    <button class="tab active" data-kind="featured">Featured</button>
+    <button class="tab" data-kind="brands">Brands</button>
+    <button class="tab" data-kind="groups">Groups</button>
+    <button class="tab" data-kind="price_ranges">Price range</button>
+  </div>
+
+  <div id="featured"></div>
+  <div id="grid" class="index-grid" style="display:none"></div>
+{% endblock %}
+{% block scripts %}
+<script type="module">
+import { lineChart, fmtPct } from "/static/charts.js?v=2";
+const d = await (await fetch("/api/indexes")).json();
+const featured = document.getElementById("featured");
+const grid = document.getElementById("grid");
+
+function card(ix) {
+  const a = document.createElement("a"); a.className = "index-card"; a.href = "/indexes/" + ix.slug;
+  const n = document.createElement("div"); n.className = "ix-name"; n.textContent = ix.name;
+  const l = document.createElement("div"); l.className = "ix-level"; l.textContent = ix.level != null ? ix.level.toFixed(1) : "—";
+  const m = document.createElement("div"); m.className = "ix-meta";
+  const chg = document.createElement("span");
+  chg.className = "delta " + (ix.chg_1y_pct > 0 ? "up" : ix.chg_1y_pct < 0 ? "down" : "flat");
+  chg.textContent = fmtPct(ix.chg_1y_pct) + " · window";
+  m.append(chg, document.createTextNode(" · " + ix.n_constituents + " watches"));
+  a.append(n, l, m); return a;
+}
+
+// Featured: overall + top brand as big charts
+function bigChart(ix) {
+  const wrap = document.createElement("div"); wrap.className = "card";
+  const head = document.createElement("div"); head.className = "card-head";
+  const h = document.createElement("h2"); h.textContent = ix.name;
+  const lv = document.createElement("span"); lv.className = "hint";
+  lv.textContent = (ix.level != null ? ix.level.toFixed(1) : "—") + "  " + fmtPct(ix.chg_1y_pct) + " over window";
+  head.append(h, lv); wrap.appendChild(head);
+  const chart = document.createElement("div"); wrap.appendChild(chart);
+  featured.appendChild(wrap);
+  lineChart(chart, { series: [{ name: ix.name, color: "#3987e5", points: ix.points, wash: true }],
+    height: 260, yFmt: (v) => v.toFixed(1), legend: false });
+}
+if (d.overall) bigChart(d.overall);
+if (d.brands.length) bigChart(d.brands[0]);
+
+const map = { brands: d.brands, groups: d.groups, price_ranges: d.price_ranges };
+document.querySelectorAll("#kind-tabs .tab").forEach(t => t.addEventListener("click", () => {
+  document.querySelectorAll("#kind-tabs .tab").forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+  const kind = t.dataset.kind;
+  if (kind === "featured") { featured.style.display = ""; grid.style.display = "none"; return; }
+  featured.style.display = "none"; grid.style.display = ""; grid.textContent = "";
+  (map[kind] || []).forEach(ix => grid.appendChild(card(ix)));
+}));
+</script>
+{% endblock %}

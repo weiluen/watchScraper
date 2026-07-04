@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Brand{% endblock %}
+{% block content %}
+  <p class="subtitle" style="margin-bottom:0"><a href="/brands">← All brands</a></p>
+  <h1 id="b-name">Brand</h1>
+  <p class="subtitle" id="b-sub"></p>
+
+  <div class="card" id="ix-card" style="display:none">
+    <div class="card-head"><h2 id="ix-title">Brand market index</h2><span class="hint" id="ix-meta"></span></div>
+    <div id="ix-chart"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Collections</h2></div>
+    <div class="watch-grid" id="collections"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Most-traded references</h2></div>
+    <table class="data">
+      <thead><tr><th>Reference</th><th>Collection</th><th class="num">Value</th><th class="num">Sales</th></tr></thead>
+      <tbody id="top-refs"></tbody>
+    </table>
+  </div>
+{% endblock %}
+{% block scripts %}
+<script type="module">
+import { lineChart, fmtUSD, fmtPct } from "/static/charts.js?v=2";
+const d = await (await fetch("/api/brands/{{ slug }}")).json();
+document.getElementById("b-name").textContent = d.brand;
+document.getElementById("b-sub").textContent = d.n_refs + " references tracked · median value " + fmtUSD(d.median_value, true);
+
+if (d.index && d.index.points && d.index.points.length >= 2) {
+  document.getElementById("ix-card").style.display = "";
+  document.getElementById("ix-meta").textContent = "Level " + d.index.level.toFixed(1) + " · " + fmtPct(d.index.chg_1y_pct) + " over window";
+  lineChart(document.getElementById("ix-chart"), { series: [{ name: d.brand, color: "#3987e5", points: d.index.points, wash: true }], height: 240, yFmt: v => v.toFixed(1), legend: false });
+}
+
+const coll = document.getElementById("collections");
+for (const c of d.collections) {
+  const a = document.createElement("a"); a.className = "watch-card"; a.href = "/watches/" + c.family_slug;
+  if (c.image) { const img = document.createElement("img"); img.className = "photo"; img.src = c.image; img.loading = "lazy"; a.appendChild(img); }
+  const fam = document.createElement("div"); fam.className = "family"; fam.textContent = c.family;
+  const meta = document.createElement("div"); meta.className = "meta"; meta.textContent = c.n_refs + " references · median " + fmtUSD(c.median_value, true);
+  a.append(fam, meta); coll.appendChild(a);
+}
+
+const tb = document.getElementById("top-refs");
+for (const r of d.top_refs) {
+  const tr = document.createElement("tr"); tr.style.cursor = "pointer";
+  tr.addEventListener("click", () => location.href = "/refs/" + r.slug);
+  const td = (t, num) => { const el = document.createElement("td"); if (num) el.className = "num"; el.textContent = t; return el; };
+  tr.append(td(r.display_ref), td(r.family || "—"), td(fmtUSD(r.median_usd), true), td(String(r.n_sold), true));
+  tb.appendChild(tr);
+}
+</script>
+{% endblock %}

@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Instant appraisal{% endblock %}
+{% block content %}
+  <h1>What's my watch worth?</h1>
+  <p class="subtitle">Get an instant market-value estimate for your watch, adjusted for its condition, what it comes with, and where you're selling.</p>
+
+  <div class="card">
+    <div class="form-grid">
+      <div style="grid-column: 1 / -1">
+        <label>Watch</label>
+        <input type="search" id="a-watch" placeholder="Search reference, nickname, or brand…" autocomplete="off">
+        <div class="gs-results" id="a-results" style="position:relative;top:2px"></div>
+        <div id="a-picked" style="margin-top:8px;color:var(--accent-gold);font-weight:600"></div>
+      </div>
+      <div><label>Condition</label>
+        <select id="a-cond"><option value="new">New / unworn</option><option value="excellent">Excellent</option><option value="good" selected>Good</option><option value="fair">Fair</option></select></div>
+      <div><label>Delivery contents</label>
+        <select id="a-cont"><option value="full_set" selected>Full set (box & papers)</option><option value="with_papers">With papers</option><option value="with_box">With box</option><option value="watch_only">Watch only</option></select></div>
+      <div><label>Region</label>
+        <select id="a-region"><option value="global" selected>Global</option><option value="america">Americas</option><option value="europe">Europe</option><option value="asia">Asia</option></select></div>
+      <div><button class="btn primary" id="a-go" style="width:100%">Get estimate</button></div>
+    </div>
+  </div>
+
+  <div class="card" id="result" style="display:none">
+    <div class="row cols-3">
+      <div class="stat-tile"><div class="label">Estimated market value</div><div class="value hero" id="r-est">—</div><div class="context" id="r-range"></div></div>
+      <div class="stat-tile"><div class="label">Base value (full set, good)</div><div class="value" id="r-base">—</div><div class="context" id="r-watch"></div></div>
+      <div class="stat-tile"><div class="label">Adjustments applied</div><div class="value" id="r-adj" style="font-size:18px">—</div><div class="context">condition × completeness</div></div>
+    </div>
+  </div>
+{% endblock %}
+{% block scripts %}
+<script type="module">
+import { fmtUSD } from "/static/charts.js?v=2";
+const input = document.getElementById("a-watch");
+const results = document.getElementById("a-results");
+const picked = document.getElementById("a-picked");
+let slug = null, timer = null;
+
+async function run(q) {
+  if (q.trim().length < 2) { results.classList.remove("open"); return; }
+  const d = await (await fetch("/api/search?q=" + encodeURIComponent(q))).json();
+  results.textContent = "";
+  for (const w of d.watches) {
+    const row = document.createElement("div"); row.className = "gs-row";
+    const name = document.createElement("div"); name.className = "gs-name"; name.textContent = w.brand + " " + w.display_ref;
+    row.appendChild(name);
+    row.addEventListener("click", () => { slug = w.slug; picked.textContent = "Selected: " + w.brand + " " + w.display_ref; results.classList.remove("open"); input.value = w.brand + " " + w.display_ref; });
+    results.appendChild(row);
+  }
+  results.classList.add("open");
+}
+input.addEventListener("input", (e) => { clearTimeout(timer); timer = setTimeout(() => run(e.target.value), 160); });
+
+document.getElementById("a-go").addEventListener("click", async () => {
+  if (!slug) { picked.textContent = "Pick a watch first."; return; }
+  const body = { slug, condition: document.getElementById("a-cond").value,
+    contents: document.getElementById("a-cont").value, region: document.getElementById("a-region").value };
+  const r = await (await fetch("/api/appraise", { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify(body) })).json();
+  document.getElementById("result").style.display = "";
+  document.getElementById("r-est").textContent = fmtUSD(r.estimate);
+  document.getElementById("r-range").textContent = "range " + fmtUSD(r.estimate_lo) + " – " + fmtUSD(r.estimate_hi);
+  document.getElementById("r-base").textContent = fmtUSD(r.base_value);
+  document.getElementById("r-watch").textContent = r.brand + " " + r.display_ref;
+  document.getElementById("r-adj").textContent = "×" + r.condition_mult.toFixed(2) + " · ×" + r.contents_mult.toFixed(2);
+});
+</script>
+{% endblock %}

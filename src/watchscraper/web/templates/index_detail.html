@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Index{% endblock %}
+{% block content %}
+  <p class="subtitle" style="margin-bottom:0"><a href="/indexes">← All indexes</a></p>
+  <h1 id="ix-name">Index</h1>
+  <p class="subtitle" id="ix-sub"></p>
+  <div class="card"><div id="chart"></div></div>
+{% endblock %}
+{% block scripts %}
+<script type="module">
+import { lineChart, fmtPct } from "/static/charts.js?v=2";
+const d = await (await fetch("/api/indexes/{{ slug }}")).json();
+document.getElementById("ix-name").textContent = d.name;
+document.getElementById("ix-sub").textContent =
+  "Level " + (d.level != null ? d.level.toFixed(1) : "—") + " · " + fmtPct(d.chg_1y_pct) +
+  " over window · " + d.n_constituents + " constituent watches";
+lineChart(document.getElementById("chart"),
+  { series: [{ name: d.name, color: "#3987e5", points: d.points, wash: true }],
+    height: 340, yFmt: (v) => v.toFixed(1), legend: false });
+</script>
+{% endblock %}

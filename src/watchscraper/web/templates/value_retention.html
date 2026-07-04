@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Value retention{% endblock %}
+{% block content %}
+  <h1>Value retention by brand</h1>
+  <p class="subtitle">Value retention is the premium or discount an <strong>in-production</strong> watch trades at on the secondary market versus its retail price — a read on demand and the best-purchased-at-retail models. Per brand: the median across its in-production references. All figures in USD.</p>
+
+  <div class="card" id="board"></div>
+{% endblock %}
+{% block scripts %}
+<script type="module">
+import { fmtUSD, fmtPct } from "/static/charts.js?v=2";
+const { leaderboard } = await (await fetch("/api/market/vr")).json();
+const board = document.getElementById("board");
+
+for (const b of leaderboard) {
+  const row = document.createElement("div"); row.className = "vr-row"; row.style.cursor = "pointer";
+  const wrap = document.createElement("div"); wrap.style.flex = "1";
+  const name = document.createElement("div"); name.className = "vr-brand"; name.textContent = b.brand;
+  wrap.appendChild(name);
+  const pct = document.createElement("div"); pct.className = "vr-pct " + (b.retention_pct >= 0 ? "delta up" : "delta down");
+  pct.textContent = fmtPct(b.retention_pct);
+  const n = document.createElement("div"); n.className = "vr-n"; n.textContent = b.n_watches + " in-production";
+  row.append(wrap, pct, n);
+  board.appendChild(row);
+
+  // expandable best/worst
+  const detail = document.createElement("div");
+  detail.style.cssText = "display:none;padding:8px 0 16px;border-bottom:1px solid var(--grid)";
+  const mk = (title, arr, cls) => {
+    const t = document.createElement("div"); t.style.cssText = "color:var(--ink-muted);font-size:11px;margin:6px 0 4px"; t.textContent = title;
+    detail.appendChild(t);
+    arr.forEach(r => {
+      const a = document.createElement("a"); a.href = "/refs/" + r.slug;
+      a.style.cssText = "display:flex;gap:12px;padding:4px 0;font-size:13px";
+      const nm = document.createElement("span"); nm.style.flex = "1"; nm.style.color = "var(--ink-2)"; nm.textContent = b.brand + " " + r.display_ref;
+      const pc = document.createElement("span"); pc.className = "delta " + (r.premium_pct >= 0 ? "up" : "down"); pc.style.minWidth = "70px"; pc.style.textAlign = "right"; pc.textContent = fmtPct(r.premium_pct);
+      a.append(nm, pc); detail.appendChild(a);
+    });
+  };
+  mk("Best at retail", b.best, "up");
+  mk("Worst at retail", b.worst, "down");
+  board.appendChild(detail);
+  row.addEventListener("click", () => { detail.style.display = detail.style.display === "none" ? "block" : "none"; });
+}
+</script>
+{% endblock %}

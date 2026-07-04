@@ -77,6 +77,75 @@ def page_portfolio(request: Request):
     return templates.TemplateResponse(request, "portfolio.html", {"nav": "portfolio"})
 
 
+# ── Market research pages (P6–P12, P15) ─────────────────────────────────────
+
+
+@app.get("/indexes", response_class=HTMLResponse)
+def page_indexes(request: Request):
+    return templates.TemplateResponse(request, "indexes.html", {"nav": "research"})
+
+
+@app.get("/indexes/{slug}", response_class=HTMLResponse)
+def page_index_detail(request: Request, slug: str):
+    return templates.TemplateResponse(
+        request, "index_detail.html", {"nav": "research", "slug": slug}
+    )
+
+
+@app.get("/market", response_class=HTMLResponse)
+def page_top_performers(request: Request):
+    return templates.TemplateResponse(request, "top_performers.html", {"nav": "research"})
+
+
+@app.get("/market/vr", response_class=HTMLResponse)
+def page_value_retention(request: Request):
+    return templates.TemplateResponse(request, "value_retention.html", {"nav": "research"})
+
+
+@app.get("/market/forecast", response_class=HTMLResponse)
+def page_forecasts(request: Request):
+    return templates.TemplateResponse(request, "forecasts.html", {"nav": "research"})
+
+
+@app.get("/market/lists", response_class=HTMLResponse)
+def page_lists(request: Request):
+    return templates.TemplateResponse(request, "lists.html", {"nav": "research"})
+
+
+@app.get("/market/lists/{slug}", response_class=HTMLResponse)
+def page_list_detail(request: Request, slug: str):
+    return templates.TemplateResponse(
+        request, "list_detail.html", {"nav": "research", "slug": slug}
+    )
+
+
+@app.get("/dataverse", response_class=HTMLResponse)
+def page_dataverse(request: Request):
+    return templates.TemplateResponse(request, "dataverse.html", {"nav": "dataverse"})
+
+
+@app.get("/appraisal", response_class=HTMLResponse)
+def page_appraisal(request: Request):
+    return templates.TemplateResponse(request, "appraisal.html", {"nav": "appraisal"})
+
+
+@app.get("/subscribe", response_class=HTMLResponse)
+def page_subscribe(request: Request):
+    return templates.TemplateResponse(request, "subscribe.html", {"nav": "premium"})
+
+
+@app.get("/brands", response_class=HTMLResponse)
+def page_brands(request: Request):
+    return templates.TemplateResponse(request, "brands.html", {"nav": "watches"})
+
+
+@app.get("/brands/{slug}", response_class=HTMLResponse)
+def page_brand(request: Request, slug: str):
+    return templates.TemplateResponse(
+        request, "brand.html", {"nav": "watches", "slug": slug}
+    )
+
+
 # ── Market API ────────────────────────────────────────────────────────────
 
 
@@ -114,6 +183,121 @@ def api_ref(slug: str):
 @app.get("/api/buying-guide")
 def api_buying_guide():
     return {"candidates": services.buying_guide_payload(services.get_market())}
+
+
+# ── Research API (P6–P10) + search + appraisal ──────────────────────────────
+
+
+@app.get("/api/search")
+def api_search(q: str = ""):
+    from watchscraper.web import research
+
+    return research.search(services.get_market(), q)
+
+
+@app.get("/api/indexes")
+def api_indexes():
+    from watchscraper.web import research
+
+    return research.indexes_payload(services.get_market())
+
+
+@app.get("/api/indexes/{slug}")
+def api_index(slug: str):
+    from watchscraper.web import research
+
+    ix = research.index_detail(services.get_market(), slug)
+    if ix is None:
+        raise HTTPException(404, "Unknown index")
+    return ix
+
+
+@app.get("/api/market/top")
+def api_top(
+    brand: str | None = None,
+    min_price: float = 0,
+    min_trend: float | None = None,
+    sort: str = "trend_desc",
+):
+    from watchscraper.web import research
+
+    return {
+        "results": research.top_performers(
+            services.get_market(), brand=brand, min_price=min_price,
+            min_trend=min_trend, sort=sort,
+        )
+    }
+
+
+@app.get("/api/market/brands")
+def api_market_brands():
+    snap = services.get_market()
+    brands = sorted({r["brand"] for r in services.refs_payload(snap)})
+    return {"brands": brands}
+
+
+@app.get("/api/market/vr")
+def api_vr():
+    from watchscraper.web import research
+
+    return {"leaderboard": research.value_retention_leaderboard(services.get_market())}
+
+
+@app.get("/api/market/forecasts")
+def api_forecasts(entitled: bool = False):
+    from watchscraper.web import research
+
+    return {
+        "forecasts": research.forecast_leaderboard(
+            services.get_market(), gated=not entitled
+        )
+    }
+
+
+@app.get("/api/lists")
+def api_lists():
+    from watchscraper.web import research
+
+    return {"lists": research.collecting_lists()}
+
+
+@app.get("/api/lists/{slug}")
+def api_list(slug: str):
+    from watchscraper.web import research
+
+    payload = research.collecting_list(services.get_market(), slug)
+    if payload is None:
+        raise HTTPException(404, "Unknown list")
+    return payload
+
+
+class AppraiseIn(BaseModel):
+    slug: str
+    condition: str = "good"
+    contents: str = "full_set"
+    region: str = "global"
+
+
+@app.post("/api/appraise")
+def api_appraise(body: AppraiseIn):
+    payload = services.appraise(services.get_market(), body.slug, body.condition, body.contents)
+    if payload is None:
+        raise HTTPException(404, "Unknown reference")
+    return payload
+
+
+@app.get("/api/brands")
+def api_brands():
+    snap = services.get_market()
+    return {"brands": services.brands_payload(snap)}
+
+
+@app.get("/api/brands/{slug}")
+def api_brand(slug: str):
+    payload = services.brand_detail_payload(services.get_market(), slug)
+    if payload is None:
+        raise HTTPException(404, "Unknown brand")
+    return payload
 
 
 # ── Portfolio API ─────────────────────────────────────────────────────────

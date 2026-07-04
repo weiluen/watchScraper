@@ -4,22 +4,46 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Complications{% endblock %} — watch market intelligence</title>
-  <link rel="stylesheet" href="/static/app.css?v=2">
+  <link rel="stylesheet" href="/static/app.css?v=3">
 </head>
 <body>
   <header class="site-header">
     <a class="wordmark" href="/">Complications<span class="mark-dot">.</span></a>
+    <div class="global-search" id="global-search">
+      <input type="search" id="gs-input" placeholder="Search watches by reference, nickname, or brand…" autocomplete="off">
+      <a class="gs-cam" href="/appraisal" title="Value your watch">◎</a>
+      <div class="gs-results" id="gs-results"></div>
+    </div>
     <nav class="site-nav">
       <a href="/" class="{{ 'active' if nav == 'dashboard' else '' }}">Market</a>
       <a href="/watches" class="{{ 'active' if nav == 'watches' else '' }}">Watches</a>
+      <a href="/dataverse" class="{{ 'active' if nav == 'dataverse' else '' }}">Dataverse</a>
+      <div class="nav-drop">
+        <a href="/indexes" class="{{ 'active' if nav == 'research' else '' }}">Research ▾</a>
+        <div class="nav-menu">
+          <a href="/indexes">Market indexes</a>
+          <a href="/market">Top performers</a>
+          <a href="/market/forecast">Price forecasts</a>
+          <a href="/market/vr">Value retention</a>
+          <a href="/market/lists">Collecting ideas</a>
+          <a href="/appraisal">Instant appraisal</a>
+        </div>
+      </div>
       <a href="/buying-guide" class="{{ 'active' if nav == 'guide' else '' }}">Buying guide</a>
-      <a href="/portfolio" class="{{ 'active' if nav == 'portfolio' else '' }}">My collection</a>
+      <a href="/portfolio" class="{{ 'active' if nav == 'portfolio' else '' }}">Collection</a>
+      <a href="/subscribe" class="premium-link {{ 'active' if nav == 'premium' else '' }}">Premium</a>
     </nav>
-    <span class="header-meta">Weekly data · eBay sold + Chrono24 ask</span>
   </header>
   <main>
     {% block content %}{% endblock %}
   </main>
+  <footer class="site-footer">
+    <div class="foot-col"><h4>Watches</h4><a href="/watches">Explorer</a><a href="/brands">Brands</a><a href="/dataverse">Dataverse</a></div>
+    <div class="foot-col"><h4>Research</h4><a href="/indexes">Indexes</a><a href="/market">Top performers</a><a href="/market/forecast">Forecasts</a><a href="/market/vr">Value retention</a></div>
+    <div class="foot-col"><h4>Tools</h4><a href="/appraisal">Appraisal</a><a href="/buying-guide">Buying guide</a><a href="/portfolio">Collection</a><a href="/subscribe">Premium</a></div>
+    <div class="foot-col foot-about"><span class="wordmark">Complications<span class="mark-dot">.</span></span><p>Secondary-market watch valuation from cleaned eBay-sold and Chrono24-ask data. Estimates are modeled, not quotes.</p></div>
+  </footer>
+  <script type="module" src="/static/search.js?v=1"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

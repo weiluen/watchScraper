@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Collecting ideas{% endblock %}
+{% block content %}
+  <h1>Collecting ideas</h1>
+  <p class="subtitle">Curated screens over the market data — each is a plainly-stated rule, refreshed with the data.</p>
+  <div id="cards"></div>
+{% endblock %}
+{% block scripts %}
+<script type="module">
+const { lists } = await (await fetch("/api/lists")).json();
+const wrap = document.getElementById("cards");
+lists.forEach((l, i) => {
+  const card = document.createElement("a"); card.className = "card"; card.href = "/market/lists/" + l.slug;
+  if (i) card.style.marginTop = "12px";
+  card.style.display = "block";
+  const h = document.createElement("h2"); h.textContent = l.title;
+  const b = document.createElement("p"); b.className = "subtitle"; b.style.margin = "6px 0 4px"; b.textContent = l.blurb;
+  const r = document.createElement("div"); r.style.cssText = "color:var(--ink-muted);font-size:12px"; r.textContent = "Rule: " + l.rule;
+  card.append(h, b, r); wrap.appendChild(card);
+});
+</script>
+{% endblock %}

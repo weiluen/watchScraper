@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Price forecasts{% endblock %}
+{% block content %}
+  <h1>Price forecasts</h1>
+  <p class="subtitle">One-year "reasonable" scenario for each reference — the damped smoothed-trend projection from the valuation model. <span class="lock-note">🔒 Numeric forecasts are a Premium feature.</span></p>
+
+  <div class="card">
+    <table class="data">
+      <thead><tr><th>Watch</th><th>Status</th><th class="num">Market value</th><th class="num">1Y forecast</th><th class="num">Past sales (1Y)</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <p class="footnote" id="count"></p>
+  </div>
+{% endblock %}
+{% block scripts %}
+<script type="module">
+import { fmtUSD, fmtPct } from "/static/charts.js?v=2";
+// entitled=false → server masks the numeric forecast (gating is server-side)
+const { forecasts } = await (await fetch("/api/market/forecasts?entitled=false")).json();
+const tb = document.getElementById("rows");
+document.getElementById("count").textContent = "Showing " + Math.min(forecasts.length, 40) + " of " + forecasts.length + " forecasted watches";
+forecasts.slice(0, 40).forEach(f => {
+  const tr = document.createElement("tr"); tr.style.cursor = "pointer";
+  tr.addEventListener("click", () => location.href = "/refs/" + f.slug);
+  const td = (t, num, cls) => { const el = document.createElement("td"); if (num) el.className = "num"; if (cls) { const s = document.createElement("span"); s.className = cls; s.textContent = t; el.appendChild(s); } else el.textContent = t; return el; };
+  tr.append(
+    td(f.brand + " " + f.display_ref),
+    td(f.current ? "In production" : "Discontinued"),
+    td(fmtUSD(f.median_usd), true),
+    f.forecast_masked ? td("+XX.X%", true, "masked") : td(fmtPct(f.forecast_pct), true, "delta " + (f.forecast_pct >= 0 ? "up" : "down")),
+    td(f.sales_1y.toLocaleString(), true),
+  );
+  tb.appendChild(tr);
+});
+</script>
+{% endblock %}
