@@ -355,8 +355,8 @@ def family_detail_payload(snapshot: MarketSnapshot, slug: str) -> dict | None:
     if not snapshot.ref_values.empty:
         fam_refs = snapshot.ref_values[
             snapshot.ref_values["family"] == family
-        ].sort_values("n_sold", ascending=False)
-        for _, r in fam_refs.head(15).iterrows():
+        ].sort_values("start_year", ascending=False, na_position="last")
+        for _, r in fam_refs.iterrows():
             row_payload = _ref_value_row(snapshot, r)
             refs.append(
                 {
@@ -365,6 +365,8 @@ def family_detail_payload(snapshot: MarketSnapshot, slug: str) -> dict | None:
                     "image": row_payload["image"],
                     "model": r["model"],
                     "years": row_payload["years"],
+                    "start_year": int(r["start_year"]) if pd.notna(r["start_year"]) else None,
+                    "current": bool(row_payload["current"]),
                     "nicknames": row_payload["nicknames"],
                     "n": int(r["n_sold"]),
                     "median": _clean_float(r["median_usd"]),
@@ -687,15 +689,52 @@ def ref_detail_payload(snapshot: MarketSnapshot, slug: str) -> dict | None:
     )
     payload["round_trip_pct"] = spread
 
-    # Individual sales as scatter points — honest at reference sample sizes
+    # Individual sales as scatter points — honest at reference sample sizes.
+    # Every point is a sale matched to THIS exact reference (+dial), never
+    # family-level fallback. `source` tags the marketplace for region splits.
     payload["sales_points"] = [
         {
             "date": r["event_date"].strftime("%Y-%m-%d"),
             "value": _clean_float(r["price"]),
             "method": r["match_method"],
+            "source": r["source"],
         }
         for _, r in ref_sold.iterrows()
     ]
+
+    # Region summaries via marketplace proxy: our eBay coverage is the US
+    # market, Chrono24 coverage is EU-dealer dominated. Asking prices for the
+    # same watch, split the same way.
+    ref_ask = clean[
+        (clean["linked_ref"] == ref)
+        & (clean["linked_brand"] == brand)
+        & (clean["linked_dial"] == dial if dial else clean["linked_dial"].isna())
+        & (clean["price_type"] == "asking")
+        & (clean["match_confidence"].fillna(0) >= REF_VALUE_MIN_CONFIDENCE)
+    ]
+    regions = []
+    for region_key, label, src in (
+        ("global", "Global", None),
+        ("america", "America", "ebay"),
+        ("europe", "Europe", "chrono24"),
+    ):
+        sold_r = ref_sold if src is None else ref_sold[ref_sold["source"] == src]
+        ask_r = ref_ask if src is None else ref_ask[ref_ask["source"] == src]
+        regions.append(
+            {
+                "key": region_key,
+                "label": label,
+                "basis": (
+                    "all tracked marketplaces" if src is None
+                    else ("eBay — US market" if src == "ebay" else "Chrono24 — EU dealers")
+                ),
+                "n_sold": int(len(sold_r)),
+                "n_ask": int(len(ask_r)),
+                "median_sold": _clean_float(sold_r["price"].median()) if len(sold_r) else None,
+                "median_ask": _clean_float(ask_r["price"].median()) if len(ask_r) else None,
+            }
+        )
+    payload["regions"] = regions
 
     payload["recent_sales"] = [
         {
@@ -704,6 +743,7 @@ def ref_detail_payload(snapshot: MarketSnapshot, slug: str) -> dict | None:
             "price": _clean_float(r["price"]),
             "method": r["match_method"],
             "confidence": _clean_float(r["match_confidence"]),
+            "source": r["source"],
         }
         for _, r in ref_sold.sort_values("event_date", ascending=False).head(25).iterrows()
     ]
@@ -797,14 +837,17 @@ def _ref_rankings(snapshot, brand, ref, dial, family) -> dict:
 def _active_scatter(snapshot, brand, ref, dial) -> list[dict]:
     """Currently-active asking listings for this watch (the unsold points)."""
     from watchscraper.database import get_session
-    from watchscraper.models import ActiveListing, Watch, Brand
+    from watchscraper.models import ActiveListing, Watch, Brand, Source
 
     session = get_session()
     try:
         q = (
-            session.query(ActiveListing.ask_price_usd, ActiveListing.first_seen)
+            session.query(
+                ActiveListing.ask_price_usd, ActiveListing.first_seen, Source.name
+            )
             .join(Watch, Watch.id == ActiveListing.watch_id)
             .join(Brand, Brand.id == Watch.brand_id)
+            .join(Source, Source.id == ActiveListing.source_id)
             .filter(Brand.name == brand, Watch.reference_number == ref,
                     ActiveListing.delisted_at.is_(None))
         )
@@ -814,8 +857,8 @@ def _active_scatter(snapshot, brand, ref, dial) -> list[dict]:
             q = q.filter(Watch.dial_variant.is_(None))
         return [
             {"date": fs.strftime("%Y-%m-%d") if fs else None,
-             "value": _clean_float(price / 100.0)}
-            for price, fs in q.limit(200).all() if price
+             "value": _clean_float(price / 100.0), "source": src}
+            for price, fs, src in q.limit(200).all() if price
         ]
     finally:
         session.close()

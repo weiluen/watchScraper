@@ -2,12 +2,12 @@
 {% block title %}Watches{% endblock %}
 {% block content %}
   <h1>Watch explorer</h1>
-  <p class="subtitle">Browse by collection or by reference — every reference number is its own watch with its own market value.</p>
+  <p class="subtitle">Every reference number is its own watch with its own market. Collections group references — they are never priced as one.</p>
 
   <div class="filter-row">
     <div class="seg-control" role="tablist">
-      <button class="seg active" id="mode-families">Collections</button>
-      <button class="seg" id="mode-refs">References</button>
+      <button class="seg active" id="mode-refs">Watches</button>
+      <button class="seg" id="mode-families">Collections</button>
     </div>
     <input type="search" id="f-search" placeholder="Search ref, nickname, family…">
     <select id="f-brand"><option value="">All brands</option></select>
@@ -74,7 +74,7 @@ for (const b of brands) {
   brandSel.appendChild(o);
 }
 
-const state = { q: "", brand: "", tier: "", style: "", material: "", sort: "median_desc", table: false, mode: "families" };
+const state = { q: "", brand: "", tier: "", style: "", material: "", sort: "median_desc", table: false, mode: "refs" };
 
 // Populate spec filter options from the ref set
 const styleSel = document.getElementById("f-style");
@@ -119,14 +119,36 @@ function renderRefCards(rows, grid) {
     card.className = "watch-card";
     card.href = "/refs/" + r.slug;
 
+    const photoWrap = document.createElement("div");
+    photoWrap.style.position = "relative";
     if (r.image) {
       const img = document.createElement("img");
       img.className = "photo";
       img.src = r.image;
       img.alt = r.brand + " " + r.ref;
       img.loading = "lazy";
-      card.appendChild(img);
+      photoWrap.appendChild(img);
     }
+    if (r.current) {
+      const prod = document.createElement("span");
+      prod.className = "badge";
+      prod.style.cssText = "position:absolute;top:8px;right:8px;background:rgba(61,169,101,.15);color:#3da965;border:1px solid rgba(61,169,101,.35)";
+      prod.textContent = "In production";
+      photoWrap.appendChild(prod);
+    }
+    card.appendChild(photoWrap);
+
+    // Spec chips: material · diameter — the identity attributes at a glance
+    const chips = document.createElement("div");
+    chips.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px";
+    for (const c of [r.case_material, r.case_size_mm ? Math.round(r.case_size_mm) + "mm" : null, r.style]) {
+      if (!c) continue;
+      const chip = document.createElement("span");
+      chip.style.cssText = "font-size:11px;color:var(--ink-3);border:1px solid var(--line);border-radius:99px;padding:2px 8px";
+      chip.textContent = c;
+      chips.appendChild(chip);
+    }
+    card.appendChild(chips);
 
     const brand = document.createElement("div");
     brand.className = "brand";
@@ -140,9 +162,28 @@ function renderRefCards(rows, grid) {
       nick.textContent = "“" + r.nicknames[0] + "”";
       fam.appendChild(nick);
     }
-    const price = document.createElement("div");
-    price.className = "price";
-    price.textContent = fmtUSD(r.median_usd);
+
+    // Two-row price block: retail vs market
+    const priceBlock = document.createElement("div");
+    priceBlock.style.cssText = "margin:8px 0 4px";
+    if (r.retail_usd) {
+      const rp = document.createElement("div");
+      rp.style.cssText = "display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink-3)";
+      const rl = document.createElement("span"); rl.textContent = "Retail";
+      const rv = document.createElement("span"); rv.textContent = fmtUSD(r.retail_usd);
+      rp.append(rl, rv);
+      priceBlock.appendChild(rp);
+    }
+    const mp = document.createElement("div");
+    mp.style.cssText = "display:flex;justify-content:space-between;align-items:baseline";
+    const ml = document.createElement("span");
+    ml.style.cssText = "font-size:12.5px;color:var(--ink-2)";
+    ml.textContent = "Market";
+    const mv = document.createElement("span");
+    mv.className = "price";
+    mv.textContent = fmtUSD(r.median_usd);
+    mp.append(ml, mv);
+    priceBlock.appendChild(mp);
     const meta = document.createElement("div");
     meta.className = "meta";
     const parts = [r.n_sold + " sales"];
@@ -152,21 +193,21 @@ function renderRefCards(rows, grid) {
     const sparkRow = document.createElement("div");
     sparkRow.className = "spark-row";
     const badges = document.createElement("span");
-    if (r.tier) {
-      const tier = document.createElement("span");
-      tier.className = "badge tier-" + r.tier;
-      tier.textContent = r.tier;
-      badges.appendChild(tier);
-    }
     if (r.premium_pct != null) {
       const prem = document.createElement("span");
       prem.className = "delta " + (r.premium_pct >= 0 ? "up" : "down");
-      prem.style.marginLeft = "8px";
       prem.textContent = fmtPct(r.premium_pct) + " vs retail";
       badges.appendChild(prem);
     }
+    if (r.chg_1m_pct != null && Math.abs(r.chg_1m_pct) >= 0.05) {
+      const chg = document.createElement("span");
+      chg.className = "delta " + (r.chg_1m_pct > 0 ? "up" : "down");
+      chg.style.marginLeft = "8px";
+      chg.textContent = (r.chg_1m_pct > 0 ? "▲ " : "▼ ") + fmtPct(r.chg_1m_pct) + " 1m";
+      badges.appendChild(chg);
+    }
     sparkRow.append(badges);
-    card.append(brand, fam, price, meta, sparkRow);
+    card.append(brand, fam, priceBlock, meta, sparkRow);
     grid.appendChild(card);
   }
 }
@@ -341,8 +382,7 @@ function setMode(mode) {
 }
 modeFam.addEventListener("click", () => setMode("families"));
 modeRefs.addEventListener("click", () => setMode("refs"));
-document.querySelectorAll(".ref-only").forEach((el) => { el.style.display = "none"; });
-if (location.hash === "#refs") setMode("refs");
-else render();
+if (location.hash === "#collections") setMode("families");
+else setMode("refs");
 </script>
 {% endblock %}

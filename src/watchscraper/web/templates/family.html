@@ -35,8 +35,17 @@
 
   <div class="card">
     <div class="card-head">
-      <h2>Market value &amp; 8-week outlook</h2>
-      <span class="hint" id="chart-hint">Smoothed, composition-adjusted value · not a weekly median</span>
+      <h2>References by generation</h2>
+      <span class="hint">each reference is its own watch with its own market — a 50-year collection is never one price</span>
+    </div>
+    <div id="generations"></div>
+    <p class="footnote" id="refs-empty" style="display:none">No confidently reference-matched sales yet for this family.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Collection trend index &amp; 8-week outlook</h2>
+      <span class="hint" id="chart-hint">an index of the collection's trend, measured within the dominant stratum — not the price of any single watch</span>
     </div>
     <div id="price-chart"></div>
   </div>
@@ -49,22 +58,12 @@
     <div class="row cols-4" id="materials-row"></div>
   </div>
 
-  <div class="row split-main">
-    <div class="card">
-      <div class="card-head"><h2>Recent sales</h2><span class="hint">cleaned eBay sold listings</span></div>
-      <table class="data">
-        <thead><tr><th>Date</th><th>Listing</th><th class="num">Price</th></tr></thead>
-        <tbody id="sales-body"></tbody>
-      </table>
-    </div>
-    <div class="card">
-      <div class="card-head"><h2>References</h2><span class="hint">each reference is a watch</span></div>
-      <table class="data">
-        <thead><tr><th>Ref</th><th class="num">Value</th><th class="num">vs retail</th></tr></thead>
-        <tbody id="refs-body"></tbody>
-      </table>
-      <p class="footnote" id="refs-empty" style="display:none">No confidently reference-matched sales yet for this family.</p>
-    </div>
+  <div class="card">
+    <div class="card-head"><h2>Recent sales</h2><span class="hint">cleaned eBay sold listings</span></div>
+    <table class="data">
+      <thead><tr><th>Date</th><th>Listing</th><th class="num">Price</th></tr></thead>
+      <tbody id="sales-body"></tbody>
+    </table>
   </div>
 {% endblock %}
 
@@ -180,61 +179,104 @@ for (const sale of d.recent_sales) {
   salesBody.appendChild(tr);
 }
 
-const refsBody = document.getElementById("refs-body");
+// References grouped by generation (production era). A collection like the
+// Royal Oak spans 50+ years — each generation trades as a different market,
+// so references are never blended across eras here.
+function eraOf(r) {
+  const y = r.start_year;
+  if (y == null) return "Undated";
+  if (r.current) return "Current production";
+  if (y >= 2020) return "2020s generation";
+  if (y >= 2010) return "2010s generation";
+  if (y >= 2000) return "2000s generation";
+  if (y >= 1990) return "1990s generation";
+  return "Vintage (pre-1990)";
+}
+const ERA_ORDER = ["Current production", "2020s generation", "2010s generation",
+                   "2000s generation", "1990s generation", "Vintage (pre-1990)", "Undated"];
+
+const genWrap = document.getElementById("generations");
 if (!d.references.length) {
   document.getElementById("refs-empty").style.display = "";
 } else {
+  const groups = new Map();
   for (const r of d.references) {
-    const tr = document.createElement("tr");
-    tr.style.cursor = "pointer";
-    tr.addEventListener("click", () => location.href = "/refs/" + r.slug);
-    const td1 = document.createElement("td");
-    if (r.image) {
-      const img = document.createElement("img");
-      img.className = "holding-photo";
-      img.style.cssText = "float:left;margin-right:10px";
-      img.src = r.image;
-      img.alt = r.ref;
-      img.loading = "lazy";
-      td1.appendChild(img);
+    const era = eraOf(r);
+    if (!groups.has(era)) groups.set(era, []);
+    groups.get(era).push(r);
+  }
+  for (const era of ERA_ORDER) {
+    const rows = groups.get(era);
+    if (!rows) continue;
+    const head = document.createElement("div");
+    head.style.cssText = "font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin:16px 0 8px";
+    head.textContent = era + " · " + rows.length + (rows.length === 1 ? " reference" : " references");
+    genWrap.appendChild(head);
+
+    const table = document.createElement("table");
+    table.className = "data";
+    const thead = document.createElement("thead");
+    const hr = document.createElement("tr");
+    for (const [label, num] of [["Ref", false], ["Years", false], ["Value", true], ["vs retail", true], ["Sales", true]]) {
+      const th = document.createElement("th");
+      if (num) th.className = "num";
+      th.textContent = label;
+      hr.appendChild(th);
     }
-    const strong = document.createElement("strong");
-    strong.textContent = r.ref;
-    td1.appendChild(strong);
-    if (r.nicknames && r.nicknames.length) {
-      const nick = document.createElement("span");
-      nick.style.cssText = "color:var(--accent-gold);font-size:11px;margin-left:7px";
-      nick.textContent = "“" + r.nicknames.join("” · “") + "”";
-      td1.appendChild(nick);
+    thead.appendChild(hr);
+    const tbody = document.createElement("tbody");
+    for (const r of rows) {
+      const tr = document.createElement("tr");
+      tr.style.cursor = "pointer";
+      tr.addEventListener("click", () => location.href = "/refs/" + r.slug);
+      const td1 = document.createElement("td");
+      if (r.image) {
+        const img = document.createElement("img");
+        img.className = "holding-photo";
+        img.style.cssText = "float:left;margin-right:10px";
+        img.src = r.image;
+        img.alt = r.ref;
+        img.loading = "lazy";
+        td1.appendChild(img);
+      }
+      const strong = document.createElement("strong");
+      strong.textContent = r.ref;
+      td1.appendChild(strong);
+      if (r.nicknames && r.nicknames.length) {
+        const nick = document.createElement("span");
+        nick.style.cssText = "color:var(--accent-gold);font-size:11px;margin-left:7px";
+        nick.textContent = "“" + r.nicknames.join("” · “") + "”";
+        td1.appendChild(nick);
+      }
+      if (r.model) {
+        const sub = document.createElement("div");
+        sub.style.color = "var(--ink-muted)"; sub.style.fontSize = "11px";
+        sub.textContent = r.model;
+        td1.appendChild(sub);
+      }
+      const td2 = document.createElement("td");
+      td2.textContent = r.years || "—";
+      const td3 = document.createElement("td");
+      td3.className = "num";
+      const val = document.createElement("strong");
+      val.textContent = fmtUSD(r.median, true);
+      td3.appendChild(val);
+      const td4 = document.createElement("td");
+      td4.className = "num";
+      if (r.premium_pct != null) {
+        const span = document.createElement("span");
+        span.className = "delta " + (r.premium_pct > 0 ? "up" : "down");
+        span.textContent = fmtPct(r.premium_pct);
+        td4.appendChild(span);
+      } else td4.textContent = "—";
+      const td5 = document.createElement("td");
+      td5.className = "num";
+      td5.textContent = String(r.n);
+      tr.append(td1, td2, td3, td4, td5);
+      tbody.appendChild(tr);
     }
-    const subParts = [];
-    if (r.model) subParts.push(r.model);
-    if (r.years) subParts.push(r.years);
-    if (subParts.length) {
-      const sub = document.createElement("div");
-      sub.style.color = "var(--ink-muted)"; sub.style.fontSize = "11px";
-      sub.textContent = subParts.join(" · ");
-      td1.appendChild(sub);
-    }
-    const td2 = document.createElement("td");
-    td2.className = "num";
-    const val = document.createElement("strong");
-    val.textContent = fmtUSD(r.median, true);
-    td2.appendChild(val);
-    const n = document.createElement("div");
-    n.style.cssText = "color:var(--ink-muted);font-size:11px";
-    n.textContent = r.n + " sales";
-    td2.appendChild(n);
-    const td3 = document.createElement("td");
-    td3.className = "num";
-    if (r.premium_pct != null) {
-      const span = document.createElement("span");
-      span.className = "delta " + (r.premium_pct > 0 ? "up" : "down");
-      span.textContent = fmtPct(r.premium_pct);
-      td3.appendChild(span);
-    } else td3.textContent = "—";
-    tr.append(td1, td2, td3);
-    refsBody.appendChild(tr);
+    table.append(thead, tbody);
+    genWrap.appendChild(table);
   }
 }
 </script>

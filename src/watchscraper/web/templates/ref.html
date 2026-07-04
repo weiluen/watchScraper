@@ -60,6 +60,11 @@
       <h2>Market value &amp; sales evidence</h2>
       <span class="hint">smooth line: modeled value with 95% band · dots: individual sales · dashes: damped outlook</span>
     </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+      <div class="tab-strip" id="region-tabs" style="margin:0"></div>
+      <a class="btn" id="csv-dl" href="/api/refs/{{ slug }}/export.csv" download>↓ Download</a>
+    </div>
+    <div id="region-note" class="footnote" style="margin:0 0 6px"></div>
     <div id="sales-chart"></div>
   </div>
 
@@ -195,43 +200,81 @@ if (parts.length) {
   verdictEl.textContent = parts.join(" ");
 }
 
-// Chart: smooth modeled value + 95% band + damped outlook + sales as dots
-const series = [];
-const bands = [];
-if (v && v.series.length >= 2) {
-  series.push({
-    name: "Modeled value", color: "#3987e5",
-    points: v.series.map((p) => ({ date: p.date, value: p.value })),
-  });
-  bands.push({
-    name: "95% band", color: "#3987e5",
-    points: v.series.map((p) => ({ date: p.date, lower: p.lo, upper: p.hi })),
-  });
-  if (v.forecast.length) {
-    const bridge = v.series[v.series.length - 1];
+// Chart: smooth modeled value + 95% band + damped outlook + sales as dots.
+// Region tabs split the sales evidence by marketplace (our eBay coverage is
+// the US market; Chrono24 is EU-dealer dominated). The modeled value line is
+// global — it pools all markets.
+const REGION_SRC = { global: null, america: "ebay", europe: "chrono24" };
+
+function drawChart(regionKey) {
+  const src = REGION_SRC[regionKey];
+  const series = [];
+  const bands = [];
+  if (v && v.series.length >= 2) {
     series.push({
-      name: "Outlook (damped)", color: "#9085e9", dashed: true,
-      points: [{ date: bridge.date, value: bridge.value },
-               ...v.forecast.map((p) => ({ date: p.date, value: p.value }))],
+      name: "Modeled value" + (src ? " (global)" : ""), color: "#3987e5",
+      points: v.series.map((p) => ({ date: p.date, value: p.value })),
     });
     bands.push({
-      name: "90% outlook band", color: "#9085e9",
-      points: [{ date: bridge.date, lower: bridge.value, upper: bridge.value },
-               ...v.forecast.map((p) => ({ date: p.date, lower: p.p05, upper: p.p95 }))],
+      name: "95% band", color: "#3987e5",
+      points: v.series.map((p) => ({ date: p.date, lower: p.lo, upper: p.hi })),
+    });
+    if (v.forecast.length && !src) {
+      const bridge = v.series[v.series.length - 1];
+      series.push({
+        name: "Outlook (damped)", color: "#9085e9", dashed: true,
+        points: [{ date: bridge.date, value: bridge.value },
+                 ...v.forecast.map((p) => ({ date: p.date, value: p.value }))],
+      });
+      bands.push({
+        name: "90% outlook band", color: "#9085e9",
+        points: [{ date: bridge.date, lower: bridge.value, upper: bridge.value },
+                 ...v.forecast.map((p) => ({ date: p.date, lower: p.p05, upper: p.p95 }))],
+      });
+    }
+  }
+  const sold = d.sales_points.filter((p) => !src || p.source === src);
+  if (sold.length) {
+    series.push({
+      name: "Sold", color: "#e34948", dots: true,
+      points: sold.map((p) => ({ date: p.date, value: p.value })),
     });
   }
+  const listed = (d.active_listings_scatter || [])
+    .filter((p) => p.date && (!src || p.source === src));
+  if (listed.length) {
+    series.push({
+      name: "Listed (asking)", color: "#3987e5", dots: true,
+      points: listed.map((p) => ({ date: p.date, value: p.value })),
+    });
+  }
+  const el = document.getElementById("sales-chart");
+  el.textContent = "";
+  lineChart(el, { series, bands, height: 300, yPrefix: "$" });
+
+  const reg = (d.regions || []).find((r) => r.key === regionKey);
+  const note = document.getElementById("region-note");
+  if (reg) {
+    const bits = [reg.basis];
+    if (reg.n_sold) bits.push(reg.n_sold + " sold" + (reg.median_sold ? " · median " + fmtUSD(reg.median_sold) : ""));
+    if (reg.n_ask) bits.push(reg.n_ask + " asking" + (reg.median_ask ? " · median " + fmtUSD(reg.median_ask) : ""));
+    note.textContent = bits.join("  ·  ");
+  } else note.textContent = "";
 }
-series.push({
-  name: "Sold", color: "#e34948", dots: true,
-  points: d.sales_points.map((p) => ({ date: p.date, value: p.value })),
-});
-if (d.active_listings_scatter && d.active_listings_scatter.length) {
-  series.push({
-    name: "Listed (asking)", color: "#3987e5", dots: true,
-    points: d.active_listings_scatter.filter(p => p.date).map((p) => ({ date: p.date, value: p.value })),
+
+const tabsEl = document.getElementById("region-tabs");
+for (const r of (d.regions && d.regions.length ? d.regions : [{ key: "global", label: "Global" }])) {
+  const b = document.createElement("button");
+  b.className = "tab" + (r.key === "global" ? " active" : "");
+  b.textContent = r.label;
+  b.addEventListener("click", () => {
+    tabsEl.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+    b.classList.add("active");
+    drawChart(r.key);
   });
+  tabsEl.appendChild(b);
 }
-lineChart(document.getElementById("sales-chart"), { series, bands, height: 300, yPrefix: "$" });
+drawChart("global");
 
 // WatchCharts-style market metrics
 const mx = d.metrics;

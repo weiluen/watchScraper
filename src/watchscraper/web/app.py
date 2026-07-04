@@ -300,6 +300,31 @@ def api_brand(slug: str):
     return payload
 
 
+@app.get("/api/refs/{slug}/export.csv")
+def api_ref_export(slug: str):
+    """Chart download: the modeled value series + every underlying sale."""
+    import csv
+    import io
+
+    from fastapi.responses import StreamingResponse
+
+    payload = services.ref_detail_payload(services.get_market(), slug)
+    if payload is None:
+        raise HTTPException(404, "Unknown reference")
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["section", "date", "value_usd", "band_lo", "band_hi", "source"])
+    for p in (payload.get("valuation") or {}).get("series", []):
+        w.writerow(["market_value", p["date"], p["value"], p.get("lo"), p.get("hi"), "model"])
+    for p in payload.get("sales_points", []):
+        w.writerow(["sold", p["date"], p["value"], "", "", p.get("source", "")])
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]), media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={slug}-chart.csv"},
+    )
+
+
 # ── Portfolio API ─────────────────────────────────────────────────────────
 
 
