@@ -5,7 +5,12 @@ import logging
 from sqlalchemy import select
 
 from watchscraper.analysis import _match_family
-from watchscraper.catalog import ADDITIONAL_WATCHES, REF_VARIANTS, all_metadata
+from watchscraper.catalog import (
+    ADDITIONAL_WATCHES,
+    FAMILY_SPECS,
+    REF_VARIANTS,
+    all_metadata,
+)
 from watchscraper.database import get_session
 from watchscraper.models import Brand, Source, Watch, WatchAlias, WatchNickname
 
@@ -606,6 +611,28 @@ def run_seed() -> None:
                     w.family = family
                     derived += 1
         logger.info("Metadata applied: %d curated, %d families derived", curated, derived)
+
+        # Full spec dimensions from FAMILY_SPECS (applied to every watch of
+        # a family, including dial-variant children)
+        spec_applied = 0
+        for w in all_watches:
+            spec = FAMILY_SPECS.get(w.family) if w.family else None
+            if not spec:
+                continue
+            w.style = spec.style
+            w.complications = ", ".join(spec.complications) or None
+            w.features = ", ".join(spec.features) or None
+            w.movement_type = spec.movement_type
+            w.frequency_bph = spec.frequency_bph
+            w.jewels = spec.jewels
+            w.power_reserve_hours = spec.power_reserve_hours
+            w.crystal = spec.crystal
+            w.dial_numerals = spec.dial_numerals
+            w.lug_width_mm = spec.lug_width_mm
+            w.water_resistance_m = spec.water_resistance_m
+            w.case_thickness_mm = spec.case_thickness_mm
+            spec_applied += 1
+        logger.info("Full specs applied to %d watches", spec_applied)
 
         # Nicknames (many references may share one nickname).
         # Ref-level nicknames stay on the parent; dial-variant children get

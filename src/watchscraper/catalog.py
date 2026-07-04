@@ -345,5 +345,286 @@ REF_VARIANTS: dict[tuple[str, str], tuple[DialVariant, ...]] = {
 }
 
 
+@dataclass(frozen=True)
+class FamilySpec:
+    """WatchCharts-vocabulary spec dimensions shared by a family.
+
+    Most specs are determined by the family (all Submariners are Dive-style,
+    300M, rotating bezel, sapphire crystal); per-reference movement details
+    and case size come from the seed rows. Values use the exact WatchCharts
+    facet vocabulary (see docs/watchcharts_taxonomy.md).
+    """
+
+    style: str
+    complications: tuple[str, ...] = ()
+    features: tuple[str, ...] = ()
+    movement_type: str = "Automatic"
+    frequency_bph: int | None = 28800
+    jewels: int | None = None
+    power_reserve_hours: int | None = None
+    crystal: str = "Sapphire crystal"
+    dial_numerals: str = "No numerals"
+    lug_width_mm: float | None = None
+    water_resistance_m: int | None = None
+    case_thickness_mm: float | None = None
+
+
+# Keyed by family (the collection name). Applied to every watch of that family.
+FAMILY_SPECS: dict[str, FamilySpec] = {
+    # ── Rolex ──
+    "Submariner": FamilySpec(
+        "Dive", ("Date",),
+        ("Rotating bezel", "Luminous hands", "Luminous indices", "Central seconds",
+         "Screw-down crown", "Chronometer", "Quick set"),
+        jewels=31, power_reserve_hours=70, lug_width_mm=21, water_resistance_m=300,
+        case_thickness_mm=12.5,
+    ),
+    "Daytona": FamilySpec(
+        "Racing", ("Chronograph", "Tachymeter"),
+        ("Luminous hands", "Luminous indices", "Central seconds", "Screw-down crown",
+         "Screw-down push-buttons", "Chronometer", "Small seconds"),
+        jewels=44, power_reserve_hours=72, lug_width_mm=20, water_resistance_m=100,
+        case_thickness_mm=11.9,
+    ),
+    "GMT-Master II": FamilySpec(
+        "Pilot", ("Date", "Gmt"),
+        ("Rotating bezel", "Luminous hands", "Luminous indices", "Central seconds",
+         "Screw-down crown", "Chronometer", "Quick set"),
+        jewels=31, power_reserve_hours=70, lug_width_mm=20, water_resistance_m=100,
+        case_thickness_mm=12.5,
+    ),
+    "GMT-Master": FamilySpec(
+        "Pilot", ("Date", "Gmt"),
+        ("Rotating bezel", "Luminous hands", "Luminous indices", "Central seconds",
+         "Screw-down crown", "Chronometer"),
+        jewels=31, power_reserve_hours=48, lug_width_mm=20, water_resistance_m=100,
+    ),
+    "Datejust": FamilySpec(
+        "Dress", ("Date",),
+        ("Luminous hands", "Luminous indices", "Central seconds", "Screw-down crown",
+         "Chronometer", "Quick set"),
+        jewels=31, power_reserve_hours=70, lug_width_mm=20, water_resistance_m=100,
+        case_thickness_mm=11.5,
+    ),
+    "Explorer": FamilySpec(
+        "Field", (),
+        ("Luminous hands", "Luminous indices", "Central seconds", "Screw-down crown",
+         "Chronometer"),
+        jewels=31, power_reserve_hours=70, lug_width_mm=20, water_resistance_m=100,
+    ),
+    "Day-Date": FamilySpec(
+        "Dress", ("Date", "Weekday"),
+        ("Luminous hands", "Central seconds", "Screw-down crown", "Chronometer",
+         "Quick set"),
+        jewels=31, power_reserve_hours=70, lug_width_mm=20, water_resistance_m=100,
+    ),
+    "Sky-Dweller": FamilySpec(
+        "Dress", ("Date", "Month", "Annual calendar", "Gmt"),
+        ("Luminous hands", "Central seconds", "Screw-down crown", "Chronometer",
+         "Rotating bezel"),
+        jewels=40, power_reserve_hours=72, lug_width_mm=21, water_resistance_m=100,
+    ),
+    "Sea-Dweller": FamilySpec(
+        "Dive", ("Date",),
+        ("Rotating bezel", "Luminous hands", "Central seconds", "Screw-down crown",
+         "Chronometer", "Helium valve"),
+        jewels=31, power_reserve_hours=70, lug_width_mm=21, water_resistance_m=1220,
+    ),
+    "Deepsea": FamilySpec(
+        "Dive", ("Date",),
+        ("Rotating bezel", "Luminous hands", "Central seconds", "Screw-down crown",
+         "Chronometer", "Helium valve"),
+        jewels=31, power_reserve_hours=70, lug_width_mm=22, water_resistance_m=3900,
+    ),
+    "Yacht-Master": FamilySpec(
+        "Dive", ("Date",),
+        ("Rotating bezel", "Luminous hands", "Central seconds", "Screw-down crown",
+         "Chronometer"),
+        jewels=31, power_reserve_hours=70, lug_width_mm=20, water_resistance_m=100,
+    ),
+    "Air-King": FamilySpec(
+        "Pilot", (),
+        ("Luminous hands", "Central seconds", "Screw-down crown", "Chronometer"),
+        jewels=31, power_reserve_hours=70, lug_width_mm=20, water_resistance_m=100,
+    ),
+    "Oyster Perpetual": FamilySpec(
+        "Dress", (),
+        ("Luminous hands", "Central seconds", "Screw-down crown", "Chronometer"),
+        jewels=31, power_reserve_hours=70, lug_width_mm=20, water_resistance_m=100,
+    ),
+    # ── Audemars Piguet ──
+    "Royal Oak": FamilySpec(
+        "Dress", ("Date",),
+        ("Luminous hands", "Luminous indices", "Central seconds", "Display back"),
+        jewels=40, power_reserve_hours=70, lug_width_mm=None, water_resistance_m=50,
+        case_thickness_mm=10.4,
+    ),
+    "Royal Oak Offshore": FamilySpec(
+        "Dive", ("Date", "Chronograph"),
+        ("Rotating bezel", "Luminous hands", "Central seconds", "Screw-down crown",
+         "Display back"),
+        jewels=59, power_reserve_hours=60, water_resistance_m=300,
+    ),
+    # ── Patek Philippe ──
+    "Nautilus": FamilySpec(
+        "Dress", ("Date",),
+        ("Luminous hands", "Luminous indices", "Central seconds", "Display back"),
+        jewels=26, power_reserve_hours=45, water_resistance_m=120, case_thickness_mm=8.3,
+    ),
+    "Aquanaut": FamilySpec(
+        "Dive", ("Date",),
+        ("Luminous hands", "Luminous indices", "Central seconds", "Display back"),
+        jewels=29, power_reserve_hours=45, water_resistance_m=120,
+    ),
+    "Calatrava": FamilySpec(
+        "Dress", (), ("Small seconds", "Display back"),
+        movement_type="Manual winding", jewels=18, power_reserve_hours=44,
+        water_resistance_m=30,
+    ),
+    # ── Omega ──
+    "Speedmaster": FamilySpec(
+        "Racing", ("Chronograph", "Tachymeter"),
+        ("Luminous hands", "Luminous indices", "Small seconds", "Display back"),
+        movement_type="Manual winding", frequency_bph=21600, jewels=17,
+        power_reserve_hours=50, crystal="Sapphire crystal", lug_width_mm=20,
+        water_resistance_m=50, case_thickness_mm=13.2,
+    ),
+    "Seamaster 300M": FamilySpec(
+        "Dive", ("Date",),
+        ("Rotating bezel", "Luminous hands", "Luminous indices", "Screw-down crown",
+         "Helium valve", "Master chronometer", "Display back"),
+        frequency_bph=25200, jewels=35, power_reserve_hours=55, lug_width_mm=20,
+        water_resistance_m=300, case_thickness_mm=13.5,
+    ),
+    "Planet Ocean": FamilySpec(
+        "Dive", ("Date",),
+        ("Rotating bezel", "Luminous hands", "Screw-down crown", "Helium valve",
+         "Master chronometer", "Display back"),
+        frequency_bph=25200, jewels=38, power_reserve_hours=60, water_resistance_m=600,
+    ),
+    "Aqua Terra": FamilySpec(
+        "Dress", ("Date",),
+        ("Luminous hands", "Luminous indices", "Screw-down crown", "Master chronometer",
+         "Display back"),
+        frequency_bph=25200, jewels=35, power_reserve_hours=55, water_resistance_m=150,
+    ),
+    # ── Vacheron Constantin ──
+    "Overseas": FamilySpec(
+        "Dress", ("Date",),
+        ("Luminous hands", "Central seconds", "Display back", "Screw-down crown"),
+        frequency_bph=28800, jewels=37, power_reserve_hours=60, water_resistance_m=150,
+    ),
+    "Patrimony": FamilySpec(
+        "Dress", (), ("Display back",),
+        movement_type="Manual winding", jewels=20, power_reserve_hours=40,
+        water_resistance_m=30,
+    ),
+    "Traditionnelle": FamilySpec(
+        "Dress", (), ("Small seconds", "Display back", "Genevian seal"),
+        movement_type="Manual winding", jewels=21, power_reserve_hours=65,
+        water_resistance_m=30,
+    ),
+    "Fiftysix": FamilySpec(
+        "Dress", ("Date",), ("Luminous hands", "Display back"),
+        jewels=22, power_reserve_hours=48, water_resistance_m=30,
+    ),
+    # ── IWC ──
+    "Portugieser": FamilySpec(
+        "Dress", ("Date", "Chronograph"),
+        ("Luminous hands", "Small seconds", "Display back"),
+        jewels=29, power_reserve_hours=46, water_resistance_m=30,
+    ),
+    "Big Pilot": FamilySpec(
+        "Pilot", ("Date", "Power reserve display"),
+        ("Luminous hands", "Luminous numerals", "Central seconds", "Screw-down crown",
+         "Power reserve display"),
+        jewels=30, power_reserve_hours=168, lug_width_mm=22, water_resistance_m=60,
+    ),
+    "Pilot Mark": FamilySpec(
+        "Pilot", ("Date",),
+        ("Luminous hands", "Luminous numerals", "Central seconds", "Screw-down crown",
+         "Soft-iron inner case"),
+        jewels=21, power_reserve_hours=42, lug_width_mm=20, water_resistance_m=60,
+    ),
+    "Aquatimer": FamilySpec(
+        "Dive", ("Date",),
+        ("Rotating bezel", "Luminous hands", "Central seconds", "Screw-down crown"),
+        jewels=28, power_reserve_hours=42, water_resistance_m=300,
+    ),
+    # ── Jaeger-LeCoultre ──
+    "Reverso": FamilySpec(
+        "Dress", (), ("Small seconds",),
+        movement_type="Manual winding", jewels=19, power_reserve_hours=42,
+        water_resistance_m=30,
+    ),
+    "Master Ultra Thin": FamilySpec(
+        "Dress", ("Date", "Moon phase"),
+        ("Luminous hands", "Display back"),
+        jewels=32, power_reserve_hours=70, water_resistance_m=50,
+    ),
+    "Polaris": FamilySpec(
+        "Dive", ("Date",),
+        ("Rotating bezel", "Luminous hands", "Central seconds", "Display back"),
+        jewels=30, power_reserve_hours=70, water_resistance_m=200,
+    ),
+    # ── A. Lange & Söhne ──
+    "Lange 1": FamilySpec(
+        "Dress", ("Date", "Panorama date", "Power reserve display"),
+        ("Small seconds", "Display back", "Power reserve display", "Tempered blue hands"),
+        movement_type="Manual winding", frequency_bph=21600, jewels=53,
+        power_reserve_hours=72, water_resistance_m=30,
+    ),
+    "Saxonia": FamilySpec(
+        "Dress", (), ("Display back", "Tempered blue hands"),
+        movement_type="Manual winding", frequency_bph=21600, jewels=21,
+        power_reserve_hours=72, water_resistance_m=30,
+    ),
+    "1815": FamilySpec(
+        "Dress", (), ("Small seconds", "Display back", "Tempered blue hands"),
+        movement_type="Manual winding", frequency_bph=21600, jewels=21,
+        power_reserve_hours=55, water_resistance_m=30,
+    ),
+    "Datograph": FamilySpec(
+        "Racing", ("Chronograph", "Panorama date"),
+        ("Small seconds", "Display back", "Tempered blue hands", "Flyback"),
+        movement_type="Manual winding", frequency_bph=18000, jewels=45,
+        power_reserve_hours=60, water_resistance_m=30,
+    ),
+    "Odysseus": FamilySpec(
+        "Dress", ("Date", "Weekday"),
+        ("Luminous hands", "Central seconds", "Display back", "Screw-down crown"),
+        frequency_bph=28800, jewels=31, power_reserve_hours=50, water_resistance_m=120,
+    ),
+    "Zeitwerk": FamilySpec(
+        "Dress", ("Jumping hour", "Power reserve display"),
+        ("Display back", "Power reserve display"),
+        movement_type="Manual winding", frequency_bph=18000, jewels=66,
+        power_reserve_hours=36, water_resistance_m=30,
+    ),
+    # ── Cartier ──
+    "Santos": FamilySpec(
+        "Dress", ("Date",),
+        ("Luminous hands", "Screw-down crown"),
+        jewels=23, power_reserve_hours=42, dial_numerals="Roman numerals",
+        water_resistance_m=100,
+    ),
+    "Tank": FamilySpec(
+        "Dress", (), ("Sapphire cabochon crown",),
+        movement_type="Quartz", frequency_bph=None, jewels=None,
+        dial_numerals="Roman numerals", water_resistance_m=30,
+    ),
+    "Ballon Bleu": FamilySpec(
+        "Dress", ("Date",), ("Sapphire cabochon crown",),
+        jewels=23, power_reserve_hours=40, dial_numerals="Roman numerals",
+        water_resistance_m=30,
+    ),
+    "Pasha": FamilySpec(
+        "Dress", ("Date",), ("Screw-down crown",),
+        jewels=23, power_reserve_hours=40, dial_numerals="Arabic numerals",
+        water_resistance_m=100,
+    ),
+}
+
+
 def all_metadata() -> dict[tuple[str, str], RefMeta]:
     return {**REF_METADATA, **ADDITIONAL_METADATA}

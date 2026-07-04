@@ -18,6 +18,8 @@
       <option value="mid">Mid ($5–15k)</option>
       <option value="entry">Entry (&lt;$5k)</option>
     </select>
+    <select id="f-style" class="ref-only"><option value="">All styles</option></select>
+    <select id="f-material" class="ref-only"><option value="">All materials</option></select>
     <select id="f-sort">
       <option value="median_desc">Price: high → low</option>
       <option value="median_asc">Price: low → high</option>
@@ -72,7 +74,17 @@ for (const b of brands) {
   brandSel.appendChild(o);
 }
 
-const state = { q: "", brand: "", tier: "", sort: "median_desc", table: false, mode: "families" };
+const state = { q: "", brand: "", tier: "", style: "", material: "", sort: "median_desc", table: false, mode: "families" };
+
+// Populate spec filter options from the ref set
+const styleSel = document.getElementById("f-style");
+const matSel = document.getElementById("f-material");
+for (const v of [...new Set(refs.map(r => r.style).filter(Boolean))].sort()) {
+  const o = document.createElement("option"); o.value = v; o.textContent = v; styleSel.appendChild(o);
+}
+for (const v of [...new Set(refs.map(r => r.case_material).filter(Boolean))].sort()) {
+  const o = document.createElement("option"); o.value = v; o.textContent = v; matSel.appendChild(o);
+}
 
 function searchText(item) {
   if (state.mode === "refs") {
@@ -87,6 +99,8 @@ function filtered() {
   let rows = pool.filter((f) =>
     (!state.brand || f.brand === state.brand) &&
     (!state.tier || f.tier === state.tier) &&
+    (state.mode !== "refs" || !state.style || f.style === state.style) &&
+    (state.mode !== "refs" || !state.material || f.case_material === state.material) &&
     (!state.q || searchText(f).includes(state.q)));
   const key = {
     median_desc: (a, b) => (b.median_usd ?? 0) - (a.median_usd ?? 0),
@@ -298,6 +312,8 @@ function render() {
 document.getElementById("f-search").addEventListener("input", (e) => { state.q = e.target.value.toLowerCase(); render(); });
 brandSel.addEventListener("change", (e) => { state.brand = e.target.value; render(); });
 document.getElementById("f-tier").addEventListener("change", (e) => { state.tier = e.target.value; render(); });
+styleSel.addEventListener("change", (e) => { state.style = e.target.value; render(); });
+matSel.addEventListener("change", (e) => { state.material = e.target.value; render(); });
 document.getElementById("f-sort").addEventListener("change", (e) => { state.sort = e.target.value; render(); });
 document.getElementById("toggle-view").addEventListener("click", (e) => {
   state.table = !state.table;
@@ -311,6 +327,10 @@ function setMode(mode) {
   state.mode = mode;
   modeFam.classList.toggle("active", mode === "families");
   modeRefs.classList.toggle("active", mode === "refs");
+  // Spec filters only apply to the reference view
+  document.querySelectorAll(".ref-only").forEach((el) => {
+    el.style.display = mode === "refs" ? "" : "none";
+  });
   // Momentum sorts only exist at family level
   const sortSel = document.getElementById("f-sort");
   if (mode === "refs" && sortSel.value.startsWith("momentum")) {
@@ -321,6 +341,7 @@ function setMode(mode) {
 }
 modeFam.addEventListener("click", () => setMode("families"));
 modeRefs.addEventListener("click", () => setMode("refs"));
+document.querySelectorAll(".ref-only").forEach((el) => { el.style.display = "none"; });
 if (location.hash === "#refs") setMode("refs");
 else render();
 </script>

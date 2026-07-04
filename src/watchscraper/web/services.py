@@ -86,6 +86,8 @@ class MarketSnapshot:
     report: dict
     dominant: dict[str, str] = field(default_factory=dict)
     breakdown: pd.DataFrame = field(default_factory=pd.DataFrame)
+    dom_by_family: dict[str, float] = field(default_factory=dict)
+    active_by_family: dict[str, int] = field(default_factory=dict)
     valuation: ValuationModel = field(default_factory=ValuationModel)
     ref_values: pd.DataFrame = field(default_factory=pd.DataFrame)
     nicknames_by_ref: dict[tuple[str, str], list[str]] = field(default_factory=dict)
@@ -104,6 +106,28 @@ class MarketSnapshot:
             if ref_slug(row["brand"], row["ref"], row.get("dial_variant")) == slug:
                 return row
         return None
+
+
+def days_on_market_by_family_cached() -> dict[str, float]:
+    from watchscraper.database import get_session
+    from watchscraper.listings import days_on_market_by_family
+
+    s = get_session()
+    try:
+        return days_on_market_by_family(s)
+    finally:
+        s.close()
+
+
+def active_counts_by_family_cached() -> dict[str, int]:
+    from watchscraper.database import get_session
+    from watchscraper.listings import active_counts_by_family
+
+    s = get_session()
+    try:
+        return active_counts_by_family(s)
+    finally:
+        s.close()
 
 
 def ref_slug(brand: str, ref: str, dial_variant: str | None = None) -> str:
@@ -143,11 +167,23 @@ def get_market(refresh: bool = False) -> MarketSnapshot:
                            w.dial_variant, w.family, w.case_material,
                            w.production_start_year AS start_year,
                            w.production_end_year AS end_year,
-                           w.retail_price_usd / 100.0 AS retail_usd
+                           w.retail_price_usd / 100.0 AS retail_usd,
+                           w.case_size_mm, w.dial_color, w.bezel, w.bracelet,
+                           w.movement, w.style, w.complications, w.features,
+                           w.movement_type, w.frequency_bph, w.jewels,
+                           w.power_reserve_hours, w.crystal, w.dial_numerals,
+                           w.lug_width_mm, w.water_resistance_m, w.case_thickness_mm
                     FROM watches w JOIN brands b ON b.id = w.brand_id
                 """),
                 engine,
             )
+            from watchscraper.listings import (
+                active_counts_by_family,
+                days_on_market_by_family,
+            )
+
+            dom_by_family = days_on_market_by_family_cached()
+            active_by_family = active_counts_by_family_cached()
             nick_rows = pd.read_sql(
                 sa_text("""
                     SELECT w.reference_number AS ref,
@@ -173,6 +209,8 @@ def get_market(refresh: bool = False) -> MarketSnapshot:
                 report=cleaning_report(df),
                 dominant=dominant,
                 breakdown=material_breakdown(df),
+                dom_by_family=dom_by_family,
+                active_by_family=active_by_family,
                 valuation=valuation,
                 ref_values=reference_values(df),
                 nicknames_by_ref=nicknames_by_ref,
@@ -467,12 +505,26 @@ def _ref_value_row(snapshot: MarketSnapshot, r: pd.Series) -> dict:
 
 
 def refs_payload(snapshot: MarketSnapshot) -> list[dict]:
-    """Every priced reference — the first-class browse unit."""
+    """Every priced reference — the first-class browse unit, with spec facets."""
     if snapshot.ref_values.empty:
         return []
-    return [
-        _ref_value_row(snapshot, r) for _, r in snapshot.ref_values.iterrows()
-    ]
+    # Index specs by (brand, ref) for filter facets on the cards
+    spec_index: dict[tuple, dict] = {}
+    if not snapshot.catalog_watches.empty:
+        for _, w in snapshot.catalog_watches.iterrows():
+            spec_index.setdefault((w["brand"], w["ref"]), w)
+
+    rows = []
+    for _, r in snapshot.ref_values.iterrows():
+        row = _ref_value_row(snapshot, r)
+        w = spec_index.get((r["brand"], r["ref"]))
+        if w is not None:
+            row["style"] = w["style"] if pd.notna(w["style"]) else None
+            row["case_material"] = w["case_material"] if pd.notna(w["case_material"]) else None
+            row["movement_type"] = w["movement_type"] if pd.notna(w["movement_type"]) else None
+            row["case_size_mm"] = _clean_float(w["case_size_mm"])
+        rows.append(row)
+    return rows
 
 
 def ref_detail_payload(snapshot: MarketSnapshot, slug: str) -> dict | None:
@@ -570,7 +622,60 @@ def ref_detail_payload(snapshot: MarketSnapshot, slug: str) -> dict | None:
             "sales_1y": wm.sales_1y,
             "market_inception": wm.market_inception,
             "forecast_1y": wm.forecast_1y,
+            "median_days_on_market": _clean_float(snapshot.dom_by_family.get(family)),
+            "active_listings": snapshot.active_by_family.get(family),
         }
+
+    # Full spec sheet (WatchCharts "Model Specifications")
+    payload["specs"] = None
+    if not snapshot.catalog_watches.empty:
+        cw = snapshot.catalog_watches
+        hit = cw[
+            (cw["brand"] == brand)
+            & (cw["ref"] == ref)
+            & (cw["dial_variant"].fillna("") == (dial or ""))
+        ]
+        if hit.empty:  # variant may inherit from the parent row
+            hit = cw[(cw["brand"] == brand) & (cw["ref"] == ref)]
+        if not hit.empty:
+            w = hit.iloc[0]
+
+            def _s(v):
+                return None if (v is None or (isinstance(v, float) and pd.isna(v))) else v
+
+            payload["specs"] = {
+                "Basic Info": {
+                    "Brand": brand,
+                    "Collection": family,
+                    "Reference": ref,
+                    "Style": _s(w["style"]),
+                    "Complications": _s(w["complications"]),
+                    "Features": _s(w["features"]),
+                    "Production": (
+                        payload["years"] + (" · in production" if payload["current"] else " · discontinued")
+                        if payload["years"] else None
+                    ),
+                },
+                "Case": {
+                    "Case Diameter": f"{w['case_size_mm']:.0f}mm" if _s(w["case_size_mm"]) else None,
+                    "Case Thickness": f"{w['case_thickness_mm']:.1f}mm" if _s(w["case_thickness_mm"]) else None,
+                    "Case Material": _s(w["case_material"]),
+                    "Bezel Material": _s(w["bezel"]),
+                    "Dial Color": dial or _s(w["dial_color"]),
+                    "Dial Numerals": _s(w["dial_numerals"]),
+                    "Crystal": _s(w["crystal"]),
+                    "Lug Width": f"{w['lug_width_mm']:.0f}mm" if _s(w["lug_width_mm"]) else None,
+                    "Water Resistance": f"{int(w['water_resistance_m'])}M" if _s(w["water_resistance_m"]) else None,
+                    "Bracelet": _s(w["bracelet"]),
+                },
+                "Movement": {
+                    "Movement Type": _s(w["movement_type"]),
+                    "Caliber": _s(w["movement"]),
+                    "Frequency": f"{int(w['frequency_bph'])} bph" if _s(w["frequency_bph"]) else None,
+                    "Number of Jewels": int(w["jewels"]) if _s(w["jewels"]) else None,
+                    "Power Reserve": f"{int(w['power_reserve_hours'])} hours" if _s(w["power_reserve_hours"]) else None,
+                },
+            }
 
     # Round-trip cost: buy at dealer ask, sell at market — the immediate
     # loss the persona takes on a flip

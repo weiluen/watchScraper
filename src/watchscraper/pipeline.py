@@ -155,6 +155,27 @@ def run_pipeline(
             session.add(record)
             inserted += 1
 
+        # Track active asking listings for days-on-market / liquidity.
+        # Applies to the full de-duplicated batch (not just new rows): a
+        # listing still present is a listing still on the market.
+        if unique_listings and unique_listings[0].price_type == "asking":
+            from watchscraper.listings import record_active, reconcile_delisted
+
+            scrape_time = datetime.now(timezone.utc)
+            watch_ids = [_resolve_watch_id(session, l) for l in unique_listings]
+            fams: list[str | None] = []
+            for wid in watch_ids:
+                fam = None
+                if wid is not None:
+                    w = session.get(Watch, wid)
+                    fam = w.family if w else None
+                fams.append(fam)
+            record_active(session, source.id, unique_listings, watch_ids, fams, scrape_time)
+            delisted = reconcile_delisted(session, source.id, scrape_time)
+            logger.info(
+                "Active listings: %d tracked, %d delisted", len(unique_listings), delisted
+            )
+
         run.records_inserted = inserted
         run.status = ScrapeRunStatus.SUCCESS
         run.finished_at = datetime.now(timezone.utc)

@@ -63,6 +63,14 @@
     <div id="sales-chart"></div>
   </div>
 
+  <div class="card" id="specs-card" style="display:none">
+    <div class="card-head">
+      <h2>Full specifications</h2>
+      <span class="hint">every dimension, WatchCharts-style</span>
+    </div>
+    <div class="row cols-3" id="specs-row"></div>
+  </div>
+
   <div class="card" id="variants-card" style="display:none">
     <div class="card-head">
       <h2>Every variant of this reference</h2>
@@ -226,6 +234,9 @@ if (mx) {
     t.append(l, v);
     return t;
   }
+  const domText = mx.median_days_on_market != null
+    ? mx.median_days_on_market.toFixed(0) + " days"
+    : (mx.active_listings != null ? mx.active_listings + " active" : "—");
   row.append(
     tile("Value retention", mx.value_retention_pct != null ? fmtPct(mx.value_retention_pct) : "—",
          mx.value_retention_pct >= 0 ? "delta up" : "delta down"),
@@ -233,6 +244,7 @@ if (mx) {
     tile("Risk score", mx.risk_score != null ? mx.risk_score + "/100" : "—",
          mx.risk_score >= 60 ? "delta down" : mx.risk_score < 35 ? "delta up" : ""),
     tile("1Y sales volume", mx.sales_1y != null ? mx.sales_1y.toLocaleString() : "—"),
+    tile(mx.median_days_on_market != null ? "Median days on market" : "Listings tracked", domText),
   );
   if (mx.risk_band && mx.risk_components) {
     const bd = document.getElementById("risk-breakdown");
@@ -274,6 +286,40 @@ if (mx) {
       t.append(l, v, ctx);
       fr.appendChild(t);
     }
+  }
+}
+
+// Full specification sheet
+if (d.specs) {
+  document.getElementById("specs-card").style.display = "";
+  const row = document.getElementById("specs-row");
+  for (const [group, fields] of Object.entries(d.specs)) {
+    const entries = Object.entries(fields).filter(([, v]) => v != null && v !== "");
+    if (!entries.length) continue;
+    const col = document.createElement("div");
+    const h = document.createElement("h2");
+    h.style.cssText = "font-size:13px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px";
+    h.textContent = group;
+    col.appendChild(h);
+    const table = document.createElement("table");
+    table.className = "data";
+    const tb = document.createElement("tbody");
+    for (const [k, v] of entries) {
+      const tr = document.createElement("tr");
+      const tdk = document.createElement("td");
+      tdk.style.color = "var(--ink-muted)";
+      tdk.textContent = k;
+      const tdv = document.createElement("td");
+      tdv.style.textAlign = "right";
+      const strong = document.createElement("strong");
+      strong.textContent = v;
+      tdv.appendChild(strong);
+      tr.append(tdk, tdv);
+      tb.appendChild(tr);
+    }
+    table.appendChild(tb);
+    col.appendChild(table);
+    row.appendChild(col);
   }
 }
 

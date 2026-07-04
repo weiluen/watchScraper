@@ -61,6 +61,20 @@ class Watch(Base):
     production_end_year: Mapped[int | None] = mapped_column(Integer)  # None = current
     retail_price_usd: Mapped[int | None] = mapped_column(BigInteger)
 
+    # Full WatchCharts-style spec dimensions
+    style: Mapped[str | None] = mapped_column(String(30))
+    complications: Mapped[str | None] = mapped_column(String(300))  # comma-joined
+    features: Mapped[str | None] = mapped_column(String(500))       # comma-joined
+    movement_type: Mapped[str | None] = mapped_column(String(30))
+    frequency_bph: Mapped[int | None] = mapped_column(Integer)
+    jewels: Mapped[int | None] = mapped_column(Integer)
+    power_reserve_hours: Mapped[int | None] = mapped_column(Integer)
+    crystal: Mapped[str | None] = mapped_column(String(40))
+    dial_numerals: Mapped[str | None] = mapped_column(String(40))
+    lug_width_mm: Mapped[float | None] = mapped_column(Float)
+    water_resistance_m: Mapped[int | None] = mapped_column(Integer)
+    case_thickness_mm: Mapped[float | None] = mapped_column(Float)
+
     brand: Mapped["Brand"] = relationship(back_populates="watches")
     aliases: Mapped[list["WatchAlias"]] = relationship(back_populates="watch")
     nicknames: Mapped[list["WatchNickname"]] = relationship(back_populates="watch")
@@ -79,6 +93,32 @@ class WatchAlias(Base):
     alias: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
 
     watch: Mapped["Watch"] = relationship(back_populates="aliases")
+
+
+class ActiveListing(Base):
+    """A currently-or-formerly active asking listing, tracked over time.
+
+    Each scrape refreshes last_seen for listings still present. When a
+    listing stops appearing it is delisted (presumed sold); days_on_market =
+    delisted_at - first_seen. Powers the median-days-on-market and listing
+    liquidity metrics.
+    """
+
+    __tablename__ = "active_listings"
+    __table_args__ = (
+        UniqueConstraint("source_id", "external_id", name="uq_active_listing"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    watch_id: Mapped[int | None] = mapped_column(ForeignKey("watches.id"))
+    family: Mapped[str | None] = mapped_column(String(100))
+    ask_price_usd: Mapped[int | None] = mapped_column(BigInteger)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    delisted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    days_on_market: Mapped[int | None] = mapped_column(Integer)
 
 
 class WatchNickname(Base):
