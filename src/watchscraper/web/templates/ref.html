@@ -38,6 +38,23 @@
     <div id="verdict-text" style="color:var(--ink-2)"></div>
   </div>
 
+  <div class="card" id="metrics-card" style="display:none">
+    <div class="card-head">
+      <h2>Market metrics</h2>
+      <span class="hint">WatchCharts-style · computed from the smoothed value + sales corpus</span>
+    </div>
+    <div class="row cols-4" id="metrics-row"></div>
+    <div id="risk-breakdown" style="margin-top:14px"></div>
+  </div>
+
+  <div class="card" id="forecast-card" style="display:none">
+    <div class="card-head">
+      <h2>1-year forecast</h2>
+      <span class="hint">three scenarios — damped trend widened by volatility</span>
+    </div>
+    <div class="row cols-3" id="forecast-row"></div>
+  </div>
+
   <div class="card">
     <div class="card-head">
       <h2>Market value &amp; sales evidence</h2>
@@ -193,6 +210,72 @@ series.push({
   points: d.sales_points.map((p) => ({ date: p.date, value: p.value })),
 });
 lineChart(document.getElementById("sales-chart"), { series, bands, height: 300, yPrefix: "$" });
+
+// WatchCharts-style market metrics
+const mx = d.metrics;
+if (mx) {
+  document.getElementById("metrics-card").style.display = "";
+  const row = document.getElementById("metrics-row");
+  function tile(label, value, cls) {
+    const t = document.createElement("div");
+    t.className = "card stat-tile";
+    t.style.background = "var(--plane)";
+    const l = document.createElement("div"); l.className = "label"; l.textContent = label;
+    const v = document.createElement("div"); v.className = "value" + (cls ? " " + cls : "");
+    v.style.fontSize = "22px"; v.textContent = value;
+    t.append(l, v);
+    return t;
+  }
+  row.append(
+    tile("Value retention", mx.value_retention_pct != null ? fmtPct(mx.value_retention_pct) : "—",
+         mx.value_retention_pct >= 0 ? "delta up" : "delta down"),
+    tile("Market volatility", mx.market_volatility_pct != null ? mx.market_volatility_pct.toFixed(1) + "%" : "—"),
+    tile("Risk score", mx.risk_score != null ? mx.risk_score + "/100" : "—",
+         mx.risk_score >= 60 ? "delta down" : mx.risk_score < 35 ? "delta up" : ""),
+    tile("1Y sales volume", mx.sales_1y != null ? mx.sales_1y.toLocaleString() : "—"),
+  );
+  if (mx.risk_band && mx.risk_components) {
+    const bd = document.getElementById("risk-breakdown");
+    const head = document.createElement("div");
+    head.style.cssText = "color:var(--ink-2);font-size:13px;margin-bottom:6px";
+    head.textContent = "Risk score " + mx.risk_score + "/100 — " + mx.risk_band +
+      " · higher = more short-term downside. Components (0 = safe, 1 = risky):";
+    bd.appendChild(head);
+    const labels = {short_term:"Short-term perf", long_term:"Long-term perf",
+      liquidity:"Liquidity", predictability:"Predictability", value_retention:"Value retention"};
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "display:flex;gap:16px;flex-wrap:wrap";
+    for (const [k, v] of Object.entries(mx.risk_components)) {
+      const chip = document.createElement("span");
+      chip.className = "reason-chip";
+      chip.textContent = (labels[k]||k) + ": " + v.toFixed(2);
+      wrap.appendChild(chip);
+    }
+    bd.appendChild(wrap);
+    if (mx.market_inception) {
+      const inc = document.createElement("div");
+      inc.style.cssText = "color:var(--ink-muted);font-size:12px;margin-top:8px";
+      inc.textContent = "Market inception (first tracked sale): " + mx.market_inception;
+      bd.appendChild(inc);
+    }
+  }
+  if (mx.forecast_1y && Object.keys(mx.forecast_1y).length) {
+    document.getElementById("forecast-card").style.display = "";
+    const fr = document.getElementById("forecast-row");
+    const order = [["conservative","Conservative","delta down"],["reasonable","Reasonable",""],["optimistic","Optimistic","delta up"]];
+    for (const [key, label, cls] of order) {
+      const t = document.createElement("div");
+      t.className = "card stat-tile"; t.style.background = "var(--plane)";
+      const l = document.createElement("div"); l.className = "label"; l.textContent = label;
+      const v = document.createElement("div"); v.className = "value " + cls;
+      v.style.fontSize = "24px"; v.textContent = fmtPct(mx.forecast_1y[key]);
+      const ctx = document.createElement("div"); ctx.className = "context";
+      ctx.textContent = fmtUSD(d.valuation.value * (1 + mx.forecast_1y[key]/100), true) + " in 1y";
+      t.append(l, v, ctx);
+      fr.appendChild(t);
+    }
+  }
+}
 
 // The variant matrix: every cataloged dial of this reference
 if (d.variants && d.variants.length) {

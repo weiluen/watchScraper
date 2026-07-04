@@ -548,6 +548,30 @@ def ref_detail_payload(snapshot: MarketSnapshot, slug: str) -> dict | None:
             ),
         }
 
+    # WatchCharts-style metric suite (value retention, volatility, risk
+    # score, sales volume, forecast fan, inception)
+    from watchscraper.metrics import compute_metrics
+
+    payload["metrics"] = None
+    node2 = snapshot.valuation.node_row(brand, ref, dial, family)
+    fam_model2 = snapshot.valuation.families.get(family)
+    if node2 is not None and fam_model2 is not None:
+        wm = compute_metrics(
+            node2, fam_model2,
+            retail_usd=payload.get("retail_usd"),
+            sold_dates=ref_sold["event_date"] if len(ref_sold) else None,
+        )
+        payload["metrics"] = {
+            "value_retention_pct": wm.value_retention_pct,
+            "market_volatility_pct": wm.market_volatility_pct,
+            "risk_score": wm.risk_score,
+            "risk_band": wm.risk_band,
+            "risk_components": wm.risk_components,
+            "sales_1y": wm.sales_1y,
+            "market_inception": wm.market_inception,
+            "forecast_1y": wm.forecast_1y,
+        }
+
     # Round-trip cost: buy at dealer ask, sell at market — the immediate
     # loss the persona takes on a flip
     fam_signal = snapshot.signals[snapshot.signals["family"] == family]
